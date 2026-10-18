@@ -11,6 +11,9 @@ from er_finder.web.components import page_style, render_header, render_pending, 
 from er_finder.web.live import load_environment
 from er_finder.web.state import WebSession
 
+DEFAULT_LATITUDE = 37.497942
+DEFAULT_LONGITUDE = 127.027621
+NOTICE_KEY, ERROR_KEY = "ui_notice", "ui_error"
 TRANSPORT_LABELS = {"car": "자동차", "walk": "도보", "transit": "대중교통"}
 KEY_LABELS = {
     "OPENAI_API_KEY": "OpenAI · 대화와 분류",
@@ -19,14 +22,22 @@ KEY_LABELS = {
 }
 
 
+def _clear_feedback() -> None:
+    st.session_state[NOTICE_KEY] = st.session_state[ERROR_KEY] = None
+
+
+def _reset_home_inputs() -> None:
+    st.session_state["home_address"] = ""
+    st.session_state["home_consent"] = False
+
+
 def _perform(action: Callable[[], None], notice: str | None = None) -> None:
-    st.session_state["ui_notice"] = None
-    st.session_state["ui_error"] = None
+    _clear_feedback()
     try:
         action()
-        st.session_state["ui_notice"] = notice
+        st.session_state[NOTICE_KEY] = notice
     except Exception:
-        st.session_state["ui_error"] = "요청을 처리하지 못했습니다. 연결 상태를 확인해 주세요."
+        st.session_state[ERROR_KEY] = "요청을 처리하지 못했습니다. 연결 상태를 확인해 주세요."
 
 
 def _sync_context(web: WebSession) -> bool:
@@ -34,14 +45,17 @@ def _sync_context(web: WebSession) -> bool:
     changed = transport != web.transport
     web.set_transport(transport)
     location = (
-        (st.session_state.get("chat_lat", 37.497942), st.session_state.get("chat_lon", 127.027621))
+        (
+            st.session_state.get("chat_lat", DEFAULT_LATITUDE),
+            st.session_state.get("chat_lon", DEFAULT_LONGITUDE),
+        )
         if st.session_state.get("use_coordinates", False)
         else None
     )
     changed = changed or location != web.location
     web.set_location(location)
     if changed:
-        st.session_state["ui_notice"] = st.session_state["ui_error"] = None
+        _clear_feedback()
     return changed
 
 
@@ -68,8 +82,7 @@ def _save_home(web: WebSession) -> None:
 
 def _clear_home(web: WebSession) -> None:
     _perform(web.clear_home_address, "기본 주소를 삭제했습니다.")
-    st.session_state["home_address"] = ""
-    st.session_state["home_consent"] = False
+    _reset_home_inputs()
 
 
 def _forget(web: WebSession) -> None:
@@ -80,11 +93,10 @@ def _forget(web: WebSession) -> None:
                 del st.session_state[key]
 
     _perform(forget_all, "대화·저장 정보와 API 조회 기록을 모두 삭제했습니다.")
-    st.session_state["home_address"] = ""
-    st.session_state["home_consent"] = False
+    _reset_home_inputs()
     st.session_state["use_coordinates"] = False
-    st.session_state["chat_lat"] = 37.497942
-    st.session_state["chat_lon"] = 127.027621
+    st.session_state["chat_lat"] = DEFAULT_LATITUDE
+    st.session_state["chat_lon"] = DEFAULT_LONGITUDE
 
 
 def _connect(web: WebSession) -> None:
@@ -101,102 +113,123 @@ def _sidebar(web: WebSession) -> None:
         st.markdown("## ✚ ER Finder")
         st.caption("실제 응급의료 정보 조회")
         st.divider()
-        st.selectbox(
-            "이동수단",
-            list(TRANSPORT_LABELS),
-            format_func=lambda value: TRANSPORT_LABELS[value],
-            key="transport",
-        )
-        with st.expander("상담 위치 직접 지정", expanded=True):
-            st.checkbox("주소 검색 없이 좌표로 조회", key="use_coordinates")
-            st.number_input(
-                "상담 위도",
-                min_value=-90.0,
-                max_value=90.0,
-                value=37.497942,
-                format="%.6f",
-                key="chat_lat",
-                disabled=not st.session_state["use_coordinates"],
-            )
-            st.number_input(
-                "상담 경도",
-                min_value=-180.0,
-                max_value=180.0,
-                value=127.027621,
-                format="%.6f",
-                key="chat_lon",
-                disabled=not st.session_state["use_coordinates"],
-            )
-            st.caption("입력된 좌표 주변을 조회합니다. 현재 위치와 일치하는지 확인해 주세요.")
-        _sync_context(web)
-        status = web.backend.status()
-        st.caption("● 에이전트 연결됨" if status.connected else "○ 에이전트 연결 확인 필요")
-        st.button(
-            "다시 연결 확인" if status.connected else "에이전트 연결 확인",
-            key="connect_runner",
-            width="stretch",
-            type="primary",
-            on_click=_connect,
-            args=(web,),
-        )
-        st.caption("의료기관 직접 조회는 에이전트 연결 없이 사용할 수 있습니다.")
+        _location_controls(web)
+        status = _connection_controls(web)
         st.divider()
-        left, right = st.columns(2)
-        left.button(
-            "새 대화",
-            key="new_conversation",
-            width="stretch",
-            on_click=_perform,
-            args=(web.reset, "대화와 승인 대기를 초기화했습니다. 저장 정보는 유지됩니다."),
+        _conversation_controls(web, status)
+        _home_address_panel(web)
+        _visit_plan_panel(web)
+        st.caption("저장 정보는 이 브라우저 세션의 서버 메모리에 보관됩니다.")
+
+
+def _location_controls(web: WebSession) -> None:
+    st.selectbox(
+        "이동수단",
+        list(TRANSPORT_LABELS),
+        format_func=lambda value: TRANSPORT_LABELS[value],
+        key="transport",
+    )
+    with st.expander("상담 위치 직접 지정", expanded=True):
+        st.checkbox("주소 검색 없이 좌표로 조회", key="use_coordinates")
+        st.number_input(
+            "상담 위도",
+            min_value=-90.0,
+            max_value=90.0,
+            value=DEFAULT_LATITUDE,
+            format="%.6f",
+            key="chat_lat",
+            disabled=not st.session_state["use_coordinates"],
         )
-        right.button(
-            "기록 전체 삭제",
-            key="forget_all",
-            width="stretch",
-            on_click=_forget,
-            args=(web,),
+        st.number_input(
+            "상담 경도",
+            min_value=-180.0,
+            max_value=180.0,
+            value=DEFAULT_LONGITUDE,
+            format="%.6f",
+            key="chat_lon",
+            disabled=not st.session_state["use_coordinates"],
         )
-        pending = bool(web.result and web.result.pending_approval)
-        st.button(
-            "상담 다시 조회",
-            key="refresh_search",
-            width="stretch",
-            disabled=not status.connected or web.result is None or pending,
-            on_click=_perform_current,
-            args=(web, web.refresh),
-        )
-        with st.expander("기본 주소"):
-            home = web.backend.profile.get_home_address()
-            if home:
-                st.caption("저장된 주소")
-                st.text(home)
-            with st.form("home_form"):
-                st.text_input("기본 주소 입력", key="home_address", max_chars=150)
-                st.checkbox("이 브라우저 세션에 기본 주소 저장에 동의합니다.", key="home_consent")
-                st.form_submit_button(
-                    "주소 저장",
-                    key="save_home",
-                    on_click=_save_home,
-                    args=(web,),
-                    width="stretch",
-                )
-            st.button(
-                "기본 주소 삭제",
-                key="clear_home",
-                on_click=_clear_home,
+        st.caption("입력된 좌표 주변을 조회합니다. 현재 위치와 일치하는지 확인해 주세요.")
+    _sync_context(web)
+
+
+def _connection_controls(web: WebSession):
+    status = web.backend.status()
+    st.caption("● 에이전트 연결됨" if status.connected else "○ 에이전트 연결 확인 필요")
+    st.button(
+        "다시 연결 확인" if status.connected else "에이전트 연결 확인",
+        key="connect_runner",
+        width="stretch",
+        type="primary",
+        on_click=_connect,
+        args=(web,),
+    )
+    st.caption("의료기관 직접 조회는 에이전트 연결 없이 사용할 수 있습니다.")
+    return status
+
+
+def _conversation_controls(web: WebSession, status) -> None:
+    left, right = st.columns(2)
+    left.button(
+        "새 대화",
+        key="new_conversation",
+        width="stretch",
+        on_click=_perform,
+        args=(web.reset, "대화와 승인 대기를 초기화했습니다. 저장 정보는 유지됩니다."),
+    )
+    right.button(
+        "기록 전체 삭제",
+        key="forget_all",
+        width="stretch",
+        on_click=_forget,
+        args=(web,),
+    )
+    pending = bool(web.result and web.result.pending_approval)
+    st.button(
+        "상담 다시 조회",
+        key="refresh_search",
+        width="stretch",
+        disabled=not status.connected or web.result is None or pending,
+        on_click=_perform_current,
+        args=(web, web.refresh),
+    )
+
+
+def _home_address_panel(web: WebSession) -> None:
+    with st.expander("기본 주소"):
+        home = web.backend.profile.get_home_address()
+        if home:
+            st.caption("저장된 주소")
+            st.text(home)
+        with st.form("home_form"):
+            st.text_input("기본 주소 입력", key="home_address", max_chars=150)
+            st.checkbox("이 브라우저 세션에 기본 주소 저장에 동의합니다.", key="home_consent")
+            st.form_submit_button(
+                "주소 저장",
+                key="save_home",
+                on_click=_save_home,
                 args=(web,),
-                disabled=home is None,
                 width="stretch",
             )
-        with st.expander("저장한 방문 계획"):
-            visits = web.backend.profile.get_recent_visits()
-            if not visits:
-                st.caption("아직 저장한 방문 계획이 없습니다.")
-            for visit in visits:
-                st.text(visit["name"])
-                st.caption(visit["saved_at"])
-            st.caption("방문 계획 저장은 병원 예약이나 접수가 아닙니다.")
-        st.caption("저장 정보는 이 브라우저 세션의 서버 메모리에 보관됩니다.")
+        st.button(
+            "기본 주소 삭제",
+            key="clear_home",
+            on_click=_clear_home,
+            args=(web,),
+            disabled=home is None,
+            width="stretch",
+        )
+
+
+def _visit_plan_panel(web: WebSession) -> None:
+    with st.expander("저장한 방문 계획"):
+        visits = web.backend.profile.get_recent_visits()
+        if not visits:
+            st.caption("아직 저장한 방문 계획이 없습니다.")
+        for visit in visits:
+            st.text(visit["name"])
+            st.caption(visit["saved_at"])
+        st.caption("방문 계획 저장은 병원 예약이나 접수가 아닙니다.")
 
 
 def _connection_view(web: WebSession) -> None:
@@ -287,18 +320,15 @@ def main() -> None:
     st.set_page_config(page_title="ER Finder · 응급실 안내", page_icon="✚", layout="wide")
     page_style()
     load_environment()
-    # Discard the former dual-mode sessions when a running server reloads this release.
-    for obsolete in ("preview_web", "live_web", "mode", "scenario", "previous_mode"):
-        st.session_state.pop(obsolete, None)
     if "web" not in st.session_state or not hasattr(st.session_state["web"].backend, "status"):
         st.session_state["web"] = WebSession()
     web: WebSession = st.session_state["web"]
     _sidebar(web)
     render_header()
-    if st.session_state.get("ui_error"):
-        st.error(st.session_state["ui_error"])
-    elif st.session_state.get("ui_notice"):
-        st.success(st.session_state["ui_notice"])
+    if st.session_state.get(ERROR_KEY):
+        st.error(st.session_state[ERROR_KEY])
+    elif st.session_state.get(NOTICE_KEY):
+        st.success(st.session_state[NOTICE_KEY])
     api, conversation, connection = st.tabs(["의료기관 조회", "에이전트 상담", "연결 상태"])
     with api:
         render_api_view()

@@ -1,6 +1,5 @@
 """Search operations validate their order and retain evidence outside model control."""
 
-import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from threading import Event, RLock
@@ -8,9 +7,17 @@ from zoneinfo import ZoneInfo
 
 from er_finder.guardrails.input_guard import assess_input
 from er_finder.guardrails.pii import mask_pii
-from er_finder.memory.state import ERFinderState
+from er_finder.messages import (
+    BEDS_FAILED_SKIP_SEVERE,
+    BEDS_NOT_CONFIRMED,
+    BEDS_REQUIRED_FIRST,
+    GEOCODE_NOT_ALLOWED,
+    LOCATION_QUERY_INVALID,
+    LOOKUP_FAILED,
+)
 from er_finder.search.distance import distance_km
 from er_finder.search.errors import ToolOrderError
+from er_finder.search.keywords import is_followup, mentions_new_symptom, requests_specialty
 from er_finder.search.location import extract_location
 from er_finder.search.planner import CallPlanner
 from er_finder.search.radius import radius_sequence
@@ -19,9 +26,14 @@ from er_finder.search.reply import ReplyBuilder
 __all__ = ["SearchSession", "ToolOrderError", "extract_location"]
 
 
-class SearchSession(CallPlanner, ReplyBuilder, ERFinderState):
+class SearchSession:
+    """Search state plus the ordered, validated provider operations that fill it.
+
+    Next-call planning and reply composition live in CallPlanner and ReplyBuilder;
+    this class keeps their public entry points so callers see one object.
+    """
+
     def __init__(self, provider, transport="car", now=None):
-        super().__init__()
         self.provider = provider
         self.transport = transport
         self.now = now or (lambda: datetime.now(ZoneInfo("Asia/Seoul")))
@@ -31,16 +43,23 @@ class SearchSession(CallPlanner, ReplyBuilder, ERFinderState):
         self.location_query = None
         self.assessment = assess_input("")
         self.triage = self.assessment.triage
-        self.facilities, self.beds, self.acceptance, self.details = {}, {}, {}, {}
-        self.audit = []
-        self.radii = radius_sequence(transport)
+        self.location = None
+        self._planner = CallPlanner(self)
+        self._replies = ReplyBuilder(self, self._planner)
+        self._reset_lookup("")
+
+    def _reset_lookup(self, text, *, force_refresh=False):
+        """Discard everything fetched for the previous request; symptom context is kept."""
+        self.radii = radius_sequence(self.transport, text)
         self.radius_index = 0
-        self.listed = self.beds_checked = self.severe_checked = False
         self.geo_attempted = False
+        self.listed = self.beds_checked = self.severe_checked = False
+        self.facilities, self.beds, self.acceptance, self.details = {}, {}, {}, {}
+        self.candidates, self.audit = [], []
         self.evidence_corrections = 0
         self.lookup_error = None
-        self.force_refresh = False
-        self.specialty_requested = False
+        self.force_refresh = force_refresh
+        self.specialty_requested = requests_specialty(text)
         self.data_timestamp = self.now().isoformat()
         self.severe_region_cache = {}
         self.beds_ready = Event()
@@ -48,32 +67,32 @@ class SearchSession(CallPlanner, ReplyBuilder, ERFinderState):
         self.planned_calls = None
 
     @property
-    def location(self):
-        """Keep the existing search API backed by memory's current_location field."""
-        return self.current_location
-
-    @location.setter
-    def location(self, value):
-        self.current_location = value
-
-    @property
     def radius(self):
         return self.radii[self.radius_index]
+
+    def next_calls(self):
+        return self._planner.next_calls()
+
+    def regions(self):
+        return self._planner.regions()
+
+    def make_reply(self):
+        return self._replies.make_reply()
+
+    def check_evidence(self, proposal):
+        return self._replies.check_evidence(proposal)
+
+    def _require(self, name, arguments):
+        self._planner._require(name, arguments)
 
     def begin(self, text, home_address=None, *, force_refresh=False, assessment=None):
         had_context = bool(self.symptom_text)
         self.text = mask_pii(text)
         self.assessment = assessment or assess_input(self.text)
         # A follow-up that only changes search options retains the clinical retrieval context.
-        followup = any(w in self.text for w in ("다시", "같은 위치", "반경", "지난번"))
+        followup = is_followup(self.text)
         self.location_query = extract_location(self.text)
-        # Full addresses may include province names, road numbers and Korean endings.
-        # A location answer with no new symptom must not erase the prior assessment.
-        new_symptoms = re.search(
-            r"아프|통증|불편|답답|식은땀|부었|붓|찢|다쳤|넘어|구토|토하|설사|두통|어지|기침|발열|고열|출혈|화상|의식|경련|숨|마비",
-            self.text,
-        )
-        location_only = bool(self.location_query) and not new_symptoms
+        location_only = bool(self.location_query) and not mentions_new_symptom(self.text)
         preserve = (
             had_context
             and (location_only or followup)
@@ -86,27 +105,11 @@ class SearchSession(CallPlanner, ReplyBuilder, ERFinderState):
             self.location = None
         elif not self.location and home_address:
             self.location_query = home_address
-        self.radii = radius_sequence(self.transport, self.text)
-        self.radius_index = 0
-        self.geo_attempted = False
-        self.listed = self.beds_checked = self.severe_checked = False
-        self.facilities, self.beds, self.acceptance, self.details = {}, {}, {}, {}
-        self.candidates, self.audit = [], []
-        self.evidence_corrections = 0
-        self.lookup_error = None
-        self.force_refresh = force_refresh
-        self.specialty_requested = any(
-            w in self.text for w in ("소아", "봉합", "정형외과", "산부인과")
-        )
-        self.data_timestamp = self.now().isoformat()
-        self.severe_region_cache = {}
-        self.beds_ready = Event()
-        self.allow_severe_batch = False
-        self.planned_calls = None
+        self._reset_lookup(self.text, force_refresh=force_refresh)
 
     def fail_lookup(self):
         with self._lock:
-            self.lookup_error = "외부 정보 조회에 실패하여 현재 후보를 확인할 수 없습니다."
+            self.lookup_error = LOOKUP_FAILED
             self.candidates = []
             self.beds_ready.set()
 
@@ -119,10 +122,10 @@ class SearchSession(CallPlanner, ReplyBuilder, ERFinderState):
 
     def geocode(self, query):
         if self.assessment.blocked or self.assessment.greeting or self.geo_attempted or self.listed:
-            raise ToolOrderError("현재 단계에서는 위치 검색을 할 수 없습니다.")
+            raise ToolOrderError(GEOCODE_NOT_ALLOWED)
         query = mask_pii(query).strip()
         if not query or len(query) > 150:
-            raise ToolOrderError("구체적인 위치를 150자 이내로 입력하세요.")
+            raise ToolOrderError(LOCATION_QUERY_INVALID)
         self.geo_attempted = True
         self.audit.append({"name": "geocode"})
         result = self.provider.geocode(query)
@@ -213,11 +216,11 @@ class SearchSession(CallPlanner, ReplyBuilder, ERFinderState):
     def get_severe_acceptance(self, regions, condition):
         if not self.beds_checked:
             if not self.allow_severe_batch:
-                raise ToolOrderError("먼저 병상 조회를 완료해야 합니다.")
+                raise ToolOrderError(BEDS_REQUIRED_FIRST)
             if not self.beds_ready.wait(timeout=35):
-                raise ToolOrderError("병상 조회 완료를 확인하지 못했습니다.")
+                raise ToolOrderError(BEDS_NOT_CONFIRMED)
             if not self.beds_checked:
-                raise ToolOrderError("병상 조회가 실패하여 중증 조회를 진행하지 않습니다.")
+                raise ToolOrderError(BEDS_FAILED_SKIP_SEVERE)
         if self.triage.condition == condition and not any(
             isinstance(b.get("er_beds_available"), int) and b["er_beds_available"] > 0
             for b in self.beds.values()

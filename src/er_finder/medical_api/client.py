@@ -118,6 +118,18 @@ def _request(endpoint: str, extra: dict, parse: Callable) -> list | dict:
         raise EgenAPIError() from None
 
 
+def _lookup(
+    endpoint: str, extra: dict, parse: Callable, *, default: list | dict, raise_on_error: bool
+) -> list | dict:
+    """Return the parsed rows, or the empty default unless the caller wants the failure."""
+    try:
+        return _request(endpoint, extra, parse)
+    except EgenAPIError:
+        if raise_on_error:
+            raise
+        return default
+
+
 def _is_stale(beds_updated_at: str | None) -> bool:
     if not beds_updated_at:
         return True
@@ -146,14 +158,13 @@ def list_nearby_ers(
     detail_cache: dict | None = None,
     raise_on_error: bool = False,
 ) -> list[dict]:
-    try:
-        rows = _request(
-            "/getEgytLcinfoInqire", {"WGS84_LAT": lat, "WGS84_LON": lon}, parser.parse_nearby
-        )
-    except EgenAPIError:
-        if raise_on_error:
-            raise
-        return []
+    rows = _lookup(
+        "/getEgytLcinfoInqire",
+        {"WGS84_LAT": lat, "WGS84_LON": lon},
+        parser.parse_nearby,
+        default=[],
+        raise_on_error=raise_on_error,
+    )
 
     nearby = [
         row
@@ -252,16 +263,13 @@ def get_severe_acceptance(
     codes = CONDITION_TO_MKIOSKTY.get(condition)
     if not codes:
         return []
-    try:
-        rows = _request(
-            "/getSrsillDissAceptncPosblInfoInqire",
-            _region_params(sido, sigungu),
-            parser.parse_severe,
-        )
-    except EgenAPIError:
-        if raise_on_error:
-            raise
-        return []
+    rows = _lookup(
+        "/getSrsillDissAceptncPosblInfoInqire",
+        _region_params(sido, sigungu),
+        parser.parse_severe,
+        default=[],
+        raise_on_error=raise_on_error,
+    )
     return [
         {
             "hpid": row["hpid"],

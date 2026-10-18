@@ -46,13 +46,13 @@ def test_location_reuse_and_reset():
     s = SearchSession(OfflineSearchProvider())
     s.begin("강남구 역삼동 손가락이 부었어요")
     finish(s)
-    assert s.location is s.current_location
+    assert s.location is not None
     s.begin("소아과 응급실만 다시 보여줘")
     r = finish(s)
     assert "geocode" not in [c["name"] for c in s.audit]
     assert "소아" in r.next_action
     s.clear()
-    assert s.location is None and s.current_location is None and not s.candidates
+    assert s.location is None and not s.candidates
     assert s.facilities == s.beds == s.acceptance == s.details == {}
     assert s.audit == []
     assert s.status()["draft"]["hospitals"] == []

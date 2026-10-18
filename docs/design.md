@@ -81,11 +81,11 @@
 ### A.4 모듈 경계
 
 - `search`는 좌표, 거리, 정렬만 담당한다. 병상과 중증 수용 데이터는 `medical_api`가 정규화한 dict로만 받는다.
-- `guardrails/middleware.py`는 미들웨어를 제공하고, `agent/runner.py`의 `ERFinder`가 이를 조립한다. `agent/factory.py`는 모델과 분류기의 생성만 맡으며 웹과 벤치마크가 함께 사용한다.
+- `guardrails/middleware.py`는 미들웨어를 제공하고, `agent/graph.py`의 `build_graph()`가 이를 조립하고 `agent/runner.py`의 `ERFinder`가 호출한다. `agent/factory.py`는 모델과 분류기의 생성만 맡으며 웹과 벤치마크가 함께 사용한다.
 - `ERFinder`는 체크포인터와 Store를 외부에서 주입받아 사용한다.
 - `cli/app.py`는 `ERFinder`의 실행과 승인 재개 인터페이스만 호출한다. 렌더링은 `ERSearchReply`만 입력으로 받는다.
 
-### A.5 미들웨어 조립 순서 (`agent/runner.py`)
+### A.5 미들웨어 조립 순서 (`agent/graph.py`)
 
 ```
 before_agent   : EmergencyInputGuard

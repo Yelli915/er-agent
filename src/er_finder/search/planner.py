@@ -1,83 +1,90 @@
 """Workflow ordering: which tool calls the server accepts next."""
 
+from er_finder.messages import (
+    TOOL_ORDER_MISMATCH,
+)
 from er_finder.search.candidates import select_candidates
 from er_finder.search.errors import ToolOrderError
 
 
 class CallPlanner:
-    """Mixin for SearchSession; reads search state, never mutates provider data."""
+    """Decides the next server-approved calls from a SearchSession's state."""
+
+    def __init__(self, session):
+        self.session = session
 
     def regions(self):
+        s = self.session
         return [
-            dict(sido=s, sigungu=g)
-            for s, g in sorted(
+            dict(sido=sido, sigungu=sigungu)
+            for sido, sigungu in sorted(
                 {
                     (r["sido"], r["sigungu"])
-                    for r in self.facilities.values()
+                    for r in s.facilities.values()
                     if r.get("sido") and r.get("sigungu") is not None
                 }
             )
         ]
 
-    def _candidates(self):
-        if self.lookup_error:
-            self.candidates = []
-            return self.candidates
-        self.candidates = select_candidates(
-            self.facilities,
-            self.beds,
-            self.acceptance,
-            self.details,
-            self.triage.condition,
-            self.now(),
+    def refresh_candidates(self):
+        s = self.session
+        if s.lookup_error:
+            s.candidates = []
+            return s.candidates
+        s.candidates = select_candidates(
+            s.facilities,
+            s.beds,
+            s.acceptance,
+            s.details,
+            s.triage.condition,
+            s.now(),
         )
-        return self.candidates
+        return s.candidates
 
     def next_calls(self):
-        if self.lookup_error:
+        s = self.session
+        if s.lookup_error:
             return []
-        if self.assessment.blocked or self.assessment.greeting:
+        if s.assessment.blocked or s.assessment.greeting:
             return []
-        if not self.location:
-            if self.location_query and not self.geo_attempted:
-                return [{"name": "geocode", "args": {"query": self.location_query}}]
+        if not s.location:
+            if s.location_query and not s.geo_attempted:
+                return [{"name": "geocode", "args": {"query": s.location_query}}]
             return []
-        if not self.listed:
+        if not s.listed:
             return [
                 {
                     "name": "list_nearby_ers",
                     "args": {
-                        "lat": self.location["lat"],
-                        "lon": self.location["lon"],
-                        "radius_km": self.radius,
+                        "lat": s.location["lat"],
+                        "lon": s.location["lon"],
+                        "radius_km": s.radius,
                     },
                 }
             ]
-        if not self.beds_checked:
+        if not s.beds_checked:
             calls = [
                 {
                     "name": "get_er_bed_status",
-                    "args": {"regions": self.regions(), "hpids": sorted(self.facilities)},
+                    "args": {"regions": self.regions(), "hpids": sorted(s.facilities)},
                 }
             ]
             new_regions = [
-                r
-                for r in self.regions()
-                if (r["sido"], r["sigungu"]) not in self.severe_region_cache
+                r for r in self.regions() if (r["sido"], r["sigungu"]) not in s.severe_region_cache
             ]
-            if self.triage.condition and new_regions:
+            if s.triage.condition and new_regions:
                 calls.append(
                     {
                         "name": "get_severe_acceptance",
-                        "args": {"regions": new_regions, "condition": self.triage.condition},
+                        "args": {"regions": new_regions, "condition": s.triage.condition},
                     }
                 )
             return calls
         positive_beds = any(
             isinstance(b.get("er_beds_available"), int) and b["er_beds_available"] > 0
-            for b in self.beds.values()
+            for b in s.beds.values()
         )
-        if self.triage.condition and not self.severe_checked and positive_beds:
+        if s.triage.condition and not s.severe_checked and positive_beds:
             return [
                 {
                     "name": "get_severe_acceptance",
@@ -85,30 +92,30 @@ class CallPlanner:
                         "regions": [
                             r
                             for r in self.regions()
-                            if (r["sido"], r["sigungu"]) not in self.severe_region_cache
+                            if (r["sido"], r["sigungu"]) not in s.severe_region_cache
                         ],
-                        "condition": self.triage.condition,
+                        "condition": s.triage.condition,
                     },
                 }
             ]
-        candidates = self._candidates()
-        if not candidates and self.radius_index < len(self.radii) - 1:
+        candidates = self.refresh_candidates()
+        if not candidates and s.radius_index < len(s.radii) - 1:
             return [
                 {
                     "name": "list_nearby_ers",
                     "args": {
-                        "lat": self.location["lat"],
-                        "lon": self.location["lon"],
-                        "radius_km": self.radii[self.radius_index + 1],
+                        "lat": s.location["lat"],
+                        "lon": s.location["lon"],
+                        "radius_km": s.radii[s.radius_index + 1],
                     },
                 }
             ]
         return [
             {"name": "get_er_detail", "args": {"hpid": h.hpid}}
             for h in candidates
-            if h.hpid not in self.details
+            if h.hpid not in s.details
         ]
 
     def _require(self, name, arguments):
         if not any(c["name"] == name and c["args"] == arguments for c in self.next_calls()):
-            raise ToolOrderError("도구 순서 또는 인자가 현재 검색 상태와 일치하지 않습니다.")
+            raise ToolOrderError(TOOL_ORDER_MISMATCH)
