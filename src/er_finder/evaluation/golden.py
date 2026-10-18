@@ -13,7 +13,7 @@ DEFAULT_PATH = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "gol
 
 
 def load_cases(path: Path | str = DEFAULT_PATH) -> list[dict[str, Any]]:
-    cases = json.loads(Path(path).read_text(encoding="utf-8"))["cases"]
+    cases: list[dict[str, Any]] = json.loads(Path(path).read_text(encoding="utf-8"))["cases"]
     ids = [c["id"] for c in cases]
     if len(ids) != len(set(ids)):
         raise ValueError("golden case ids must be unique")

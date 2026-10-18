@@ -2,11 +2,11 @@ import re
 from dataclasses import dataclass
 
 from er_finder.guardrails.pii import normalize
-from er_finder.models import TriageAssessment
+from er_finder.models import Condition, Severity, TriageAssessment
 
-# 설계서 부록 A. 키워드 사전 40개 (어간 형태, 공백 제거 후 부분 문자열 일치)
-# 설계서와 동일한 개수: 의식·반응 7 / 호흡 8 / 심장·흉통 5
-# 출혈 6 / 신경 7 / 외상·중독 7
+# 설계서 부록 A. 키워드 사전 (어간 형태, 공백 제거 후 부분 문자열 일치)
+# 설계서 기준 40개에 골든셋 실측으로 확인된 과소 분류 표현을 보강했다(호흡 +3,
+# 심장 +1, 출혈 +2, 신경 +2). 오탐은 과잉 안내(119)로 이어지므로 구체적 표현만 추가한다.
 CRITICAL_PHRASES = (
     # 의식·반응 (7)
     "의식없",
@@ -24,6 +24,9 @@ CRITICAL_PHRASES = (
     "호흡이멈",
     "숨을안쉬",
     "입술이파랗",
+    "입술이파래",
+    "숨이막",
+    "호흡이가빠",
     "질식",
     # 심장·흉통 (5)
     "심한흉통",
@@ -31,6 +34,7 @@ CRITICAL_PHRASES = (
     "가슴통증이심",
     "심정지",
     "맥박이없",
+    "맥박이안잡",
     # 출혈 (6)
     "피가멈추지않",
     "대량출혈",
@@ -38,6 +42,8 @@ CRITICAL_PHRASES = (
     "피가계속",
     "토혈",
     "피를토",
+    "손가락이잘려",
+    "팔다리가잘려",
     # 신경 (7)
     "경련",
     "발작",
@@ -46,6 +52,8 @@ CRITICAL_PHRASES = (
     "말이어눌",
     "얼굴이한쪽으로",
     "극심한두통",
+    "힘이갑자기빠",
+    "말도잘안나",
     # 외상·중독 (7)
     "추락",
     "교통사고",
@@ -75,7 +83,7 @@ SUSPICIOUS = re.compile(
 # - 진단/처방 요청, 잡담, 관련 없는 주제(주식, 날씨 등)를 차단
 OUT_OF_SCOPE = re.compile(
     r"무슨\s*(?:병|약)|어떤\s*약|약.{0,8}(?:먹어야|먹어도|먹을까|복용해도|복용량|추천)"
-    r"|처방해|진단해|치료법|주식|코인|날씨|시\s*써줘"
+    r"|처방해|진단해|치료법|주식|코인|날씨|시\s*써줘|타이레놀|몇\s*알"
 )
 
 
@@ -93,12 +101,29 @@ def assess_input(text: str) -> InputAssessment:
     compact = re.sub(r"\s", "", text)
     critical = any(phrase in compact for phrase in CRITICAL_PHRASES)
     urgent = any(
-        p in compact for p in ("가슴", "흉통", "식은땀", "고열", "화상", "진통", "출산", "교통사고")
+        p in compact
+        for p in (
+            "가슴",
+            "흉통",
+            "식은땀",
+            "고열",
+            "화상",
+            "진통",
+            "출산",
+            "교통사고",
+            "부러",
+            "골절",
+            "축처",
+        )
     )
-    severity = "critical" if critical else "urgent" if urgent else "standard"
-    condition = None
+    severity: Severity = "critical" if critical else "urgent" if urgent else "standard"
+    condition: Condition | None = None
     if severity != "standard":
         if any(p in compact for p in ("말이어눌", "한쪽팔에힘", "얼굴이한쪽으로")):
+            condition = "뇌졸중"
+        elif any(p in compact for p in ("극심한두통", "벼락두통")):
+            condition = "뇌출혈"
+        elif any(p in compact for p in ("힘이갑자기빠", "말도잘안나")):
             condition = "뇌졸중"
         elif any(p in compact for p in ("가슴", "흉통", "식은땀")):
             condition = "심근경색"
@@ -106,7 +131,7 @@ def assess_input(text: str) -> InputAssessment:
             condition = "화상"
         elif any(p in compact for p in ("진통", "출산", "분만")):
             condition = "분만"
-        elif "교통사고" in compact or "중증외상" in compact:
+        elif any(p in compact for p in ("교통사고", "중증외상", "추락")):
             condition = "중증외상"
 
     injection = bool(INJECTION.search(text))

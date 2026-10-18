@@ -1,11 +1,13 @@
 """Search operations validate their order and retain evidence outside model control."""
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from threading import Event, RLock
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from er_finder.guardrails.input_guard import assess_input
+from er_finder.guardrails.input_guard import InputAssessment, assess_input
 from er_finder.guardrails.pii import mask_pii
 from er_finder.messages import (
     BEDS_FAILED_SKIP_SEVERE,
@@ -15,6 +17,7 @@ from er_finder.messages import (
     LOCATION_QUERY_INVALID,
     LOOKUP_FAILED,
 )
+from er_finder.models import ERSearchReply, HospitalCandidate, Radius
 from er_finder.search.distance import distance_km
 from er_finder.search.errors import ToolOrderError
 from er_finder.search.keywords import is_followup, mentions_new_symptom, requests_specialty
@@ -33,59 +36,75 @@ class SearchSession:
     this class keeps their public entry points so callers see one object.
     """
 
-    def __init__(self, provider, transport="car", now=None):
+    def __init__(
+        self,
+        provider: Any,
+        transport: str = "car",
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
         self.provider = provider
         self.transport = transport
         self.now = now or (lambda: datetime.now(ZoneInfo("Asia/Seoul")))
         self._lock = RLock()
         self.text = ""
         self.symptom_text = ""
-        self.location_query = None
+        self.location_query: str | None = None
         self.assessment = assess_input("")
         self.triage = self.assessment.triage
-        self.location = None
+        self.location: dict[str, Any] | None = None
         self._planner = CallPlanner(self)
         self._replies = ReplyBuilder(self, self._planner)
         self._reset_lookup("")
 
-    def _reset_lookup(self, text, *, force_refresh=False):
+    def _reset_lookup(self, text: str, *, force_refresh: bool = False) -> None:
         """Discard everything fetched for the previous request; symptom context is kept."""
         self.radii = radius_sequence(self.transport, text)
         self.radius_index = 0
         self.geo_attempted = False
         self.listed = self.beds_checked = self.severe_checked = False
-        self.facilities, self.beds, self.acceptance, self.details = {}, {}, {}, {}
-        self.candidates, self.audit = [], []
+        self.facilities: dict[str, dict[str, Any]] = {}
+        self.beds: dict[str, dict[str, Any]] = {}
+        self.acceptance: dict[str, dict[str, Any]] = {}
+        self.details: dict[str, dict[str, Any]] = {}
+        self.candidates: list[HospitalCandidate] = []
+        self.audit: list[dict[str, Any]] = []
         self.evidence_corrections = 0
-        self.lookup_error = None
+        self.lookup_error: str | None = None
         self.force_refresh = force_refresh
         self.specialty_requested = requests_specialty(text)
         self.data_timestamp = self.now().isoformat()
-        self.severe_region_cache = {}
+        self.severe_region_cache: dict[tuple[Any, Any], dict[str, dict[str, Any]]] = {}
         self.beds_ready = Event()
         self.allow_severe_batch = False
-        self.planned_calls = None
+        self.planned_calls: list[dict[str, Any]] | None = None
 
     @property
-    def radius(self):
+    def radius(self) -> Radius:
         return self.radii[self.radius_index]
 
-    def next_calls(self):
+    def next_calls(self) -> list[dict[str, Any]]:
         return self._planner.next_calls()
 
-    def regions(self):
+    def regions(self) -> list[dict[str, str]]:
         return self._planner.regions()
 
-    def make_reply(self):
+    def make_reply(self) -> ERSearchReply:
         return self._replies.make_reply()
 
-    def check_evidence(self, proposal):
+    def check_evidence(self, proposal: Any) -> ERSearchReply:
         return self._replies.check_evidence(proposal)
 
-    def _require(self, name, arguments):
+    def _require(self, name: str, arguments: dict[str, Any]) -> None:
         self._planner._require(name, arguments)
 
-    def begin(self, text, home_address=None, *, force_refresh=False, assessment=None):
+    def begin(
+        self,
+        text: str,
+        home_address: str | None = None,
+        *,
+        force_refresh: bool = False,
+        assessment: InputAssessment | None = None,
+    ) -> None:
         had_context = bool(self.symptom_text)
         self.text = mask_pii(text)
         self.assessment = assessment or assess_input(self.text)
@@ -107,20 +126,20 @@ class SearchSession:
             self.location_query = home_address
         self._reset_lookup(self.text, force_refresh=force_refresh)
 
-    def fail_lookup(self):
+    def fail_lookup(self) -> None:
         with self._lock:
             self.lookup_error = LOOKUP_FAILED
             self.candidates = []
             self.beds_ready.set()
 
-    def status(self):
+    def status(self) -> dict[str, Any]:
         return {
             "next_calls": self.next_calls(),
             "draft": self.make_reply().model_dump(),
             "demo": bool(getattr(self.provider, "is_demo", False)),
         }
 
-    def geocode(self, query):
+    def geocode(self, query: str) -> dict[str, Any]:
         if self.assessment.blocked or self.assessment.greeting or self.geo_attempted or self.listed:
             raise ToolOrderError(GEOCODE_NOT_ALLOWED)
         query = mask_pii(query).strip()
@@ -139,7 +158,7 @@ class SearchSession:
             self.location = None
         return {"location": self.location, **self.status()}
 
-    def list_nearby_ers(self, lat, lon, radius_km=5):
+    def list_nearby_ers(self, lat: float, lon: float, radius_km: int = 5) -> dict[str, Any]:
         self._require("list_nearby_ers", dict(lat=lat, lon=lon, radius_km=radius_km))
         if radius_km != self.radius:
             self.radius_index += 1
@@ -169,18 +188,18 @@ class SearchSession:
             **self.status(),
         }
 
-    def _reuse_acceptance(self):
+    def _reuse_acceptance(self) -> None:
         self.acceptance = {}
         for hpid, row in self.facilities.items():
             prior = self.severe_region_cache.get((row.get("sido"), row.get("sigungu")), {})
             if hpid in prior:
                 self.acceptance[hpid] = prior[hpid]
 
-    def get_er_bed_status(self, regions, hpids):
+    def get_er_bed_status(self, regions: list[dict[str, str]], hpids: list[str]) -> dict[str, Any]:
         self._require("get_er_bed_status", dict(regions=regions, hpids=hpids))
         self.audit.append({"name": "get_er_bed_status", "region_count": len(regions)})
 
-        def fetch(region):
+        def fetch(region: dict[str, str]) -> list[dict[str, Any]]:
             ids = [
                 h
                 for h in hpids
@@ -213,7 +232,9 @@ class SearchSession:
         finally:
             self.beds_ready.set()
 
-    def get_severe_acceptance(self, regions, condition):
+    def get_severe_acceptance(
+        self, regions: list[dict[str, str]], condition: str
+    ) -> dict[str, Any]:
         if not self.beds_checked:
             if not self.allow_severe_batch:
                 raise ToolOrderError(BEDS_REQUIRED_FIRST)
@@ -229,7 +250,9 @@ class SearchSession:
         self._require("get_severe_acceptance", dict(regions=regions, condition=condition))
         self.audit.append({"name": "get_severe_acceptance", "region_count": len(regions)})
 
-        def fetch(region):
+        def fetch(
+            region: dict[str, str],
+        ) -> tuple[tuple[str, str], dict[str, dict[str, Any]]]:
             rows = self.provider.get_severe_acceptance(region["sido"], region["sigungu"], condition)
             return (region["sido"], region["sigungu"]), {
                 r["hpid"]: r for r in rows if r.get("hpid")
@@ -242,7 +265,7 @@ class SearchSession:
         self.severe_checked = True
         return {"acceptance": list(self.acceptance.values()), **self.status()}
 
-    def get_er_detail(self, hpid):
+    def get_er_detail(self, hpid: str) -> dict[str, Any]:
         # Model tool calls for the top three may execute concurrently.
         with self._lock:
             self._require("get_er_detail", dict(hpid=hpid))
@@ -252,7 +275,7 @@ class SearchSession:
             self.audit.append({"name": "get_er_detail", "hpid": hpid})
             return {"hpid": hpid, "detail": self.details[hpid], **self.status()}
 
-    def snapshot(self):
+    def snapshot(self) -> dict[str, Any]:
         return {
             "current_location": self.location,
             "triage": self.triage.model_dump(),
@@ -260,6 +283,6 @@ class SearchSession:
             "candidates": [h.model_dump() for h in self.candidates],
         }
 
-    def clear(self):
+    def clear(self) -> None:
         provider, transport, now = self.provider, self.transport, self.now
-        self.__init__(provider, transport=transport, now=now)
+        SearchSession.__init__(self, provider, transport=transport, now=now)

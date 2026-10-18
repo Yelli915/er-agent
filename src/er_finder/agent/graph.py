@@ -1,5 +1,7 @@
 """Assemble the LangGraph agent. Middleware order is behavior: keep it in one place."""
 
+from typing import Any
+
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     HumanInTheLoopMiddleware,
@@ -29,16 +31,16 @@ TOOL_RETRY_DELAY = 1.0
 
 
 def build_graph(
-    model,
+    model: Any,
     *,
-    session,
-    profiles,
-    visit,
-    counter,
-    store,
-    checkpointer,
-    server_planned_calls=True,
-):
+    session: Any,
+    profiles: Any,
+    visit: Any,
+    counter: Any,
+    store: Any,
+    checkpointer: Any,
+    server_planned_calls: bool = True,
+) -> Any:
     return create_agent(
         model,
         tools=TOOLS,

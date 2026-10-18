@@ -1,9 +1,9 @@
 from time import perf_counter
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from er_finder.guardrails.input_guard import assess_input
+from er_finder.guardrails.input_guard import InputAssessment, assess_input
 from er_finder.guardrails.pii import mask_pii
 from er_finder.models import Condition, TriageAssessment
 from er_finder.prompts import CLASSIFIER_PROMPT
@@ -28,11 +28,11 @@ class InputClassifier:
     사용자의 입력 텍스트를 정규식 기반 룰셋과 LLM을 조합하여 종합 평가하는 클래스
     """
 
-    def __init__(self, model=None):
+    def __init__(self, model: Any = None) -> None:
         self.model = model
         self.last_usage = ClassifierUsage()
 
-    def assess(self, text):
+    def assess(self, text: str) -> InputAssessment:
         """
         사용자 입력 문장을 분석하여 중증도 분류 및 보안 차단 여부를 최종 판정
         """

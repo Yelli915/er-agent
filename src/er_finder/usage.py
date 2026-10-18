@@ -1,19 +1,21 @@
 """Token and latency accounting shared by the agent graph and the input classifier."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 
 
 class RunUsage(BaseCallbackHandler):
     """Retain token counts only, never model inputs, outputs, or exceptions."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.responses = 0
         self.known_responses = 0
-        self.tokens = dict(input_tokens=0, output_tokens=0, total_tokens=0)
+        self.tokens: dict[str, int] = dict(input_tokens=0, output_tokens=0, total_tokens=0)
 
-    def on_llm_end(self, response, **kwargs):
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         self.responses += 1
         if not response.generations or not response.generations[0]:
             return

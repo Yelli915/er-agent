@@ -1,7 +1,10 @@
 import re
+from typing import cast
+
+from er_finder.models import Radius
 
 
-def radius_sequence(transport: str, text: str = "") -> list[int]:
+def radius_sequence(transport: str, text: str = "") -> list[Radius]:
     if transport not in {"car", "walk", "transit"}:
         raise ValueError("transport must be car, walk or transit")
     radii = [3 if transport == "walk" else 5, 10, 20, 30]
@@ -9,5 +12,5 @@ def radius_sequence(transport: str, text: str = "") -> list[int]:
     if match:
         requested = int(match[1])
         # Explicit supported radii are respected; subsequent expansions remain bounded.
-        return [requested] + [r for r in (10, 20, 30) if r > requested]
-    return radii
+        return cast(list[Radius], [requested] + [r for r in (10, 20, 30) if r > requested])
+    return cast(list[Radius], radii)

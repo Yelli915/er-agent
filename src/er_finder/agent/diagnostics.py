@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from er_finder.usage import ClassifierUsage, RunUsage
 
@@ -28,7 +29,7 @@ _ERROR_PARAM = re.compile(
 )
 
 
-def error_metadata(error: Exception) -> dict:
+def error_metadata(error: Exception) -> dict[str, Any]:
     """Allow only exception class and fixed API diagnostic identifiers."""
     status = getattr(error, "status_code", None)
     code = getattr(error, "code", None)
@@ -76,14 +77,16 @@ class RunDiagnostics:
         session_model_calls: int,
         elapsed_seconds: float,
         succeeded: bool,
-        error: dict | None = None,
+        error: dict[str, Any] | None = None,
     ) -> "RunDiagnostics":
         known = usage.known_responses or not model_calls
         return cls(
             model_calls=model_calls,
             session_model_calls=session_model_calls,
             elapsed_seconds=max(0.0, elapsed_seconds),
-            **{key: value if known else None for key, value in usage.tokens.items()},
+            input_tokens=usage.tokens["input_tokens"] if known else None,
+            output_tokens=usage.tokens["output_tokens"] if known else None,
+            total_tokens=usage.tokens["total_tokens"] if known else None,
             tokens_complete=usage.known_responses == usage.responses == model_calls,
             succeeded=succeeded,
             classifier_calls=classifier_usage.calls,

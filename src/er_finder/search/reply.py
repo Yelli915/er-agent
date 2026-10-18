@@ -1,5 +1,7 @@
 """Reply composition and evidence checking from verified search state."""
 
+from typing import TYPE_CHECKING, Any
+
 from er_finder.guardrails.evidence import sanitize_prose
 from er_finder.messages import (
     ACTION_BLOCKED,
@@ -20,18 +22,22 @@ from er_finder.messages import (
 )
 from er_finder.models import DISCLAIMER, ERSearchReply
 
+if TYPE_CHECKING:
+    from er_finder.search.planner import CallPlanner
+    from er_finder.search.service import SearchSession
+
 
 class ReplyBuilder:
     """Builds the source-derived reply from a SearchSession and its call planner."""
 
-    def __init__(self, session, planner):
+    def __init__(self, session: "SearchSession", planner: "CallPlanner") -> None:
         self.session = session
         self.planner = planner
 
-    def make_reply(self):
+    def make_reply(self) -> ERSearchReply:
         s = self.session
         self.planner.refresh_candidates()
-        reason = None
+        reason: str | None = None
         action = ACTION_CALL_HOSPITAL
         if s.assessment.blocked:
             s.candidates = []
@@ -80,7 +86,7 @@ class ReplyBuilder:
             disclaimer=DISCLAIMER,
         )
 
-    def check_evidence(self, proposal):
+    def check_evidence(self, proposal: Any) -> ERSearchReply:
         s = self.session
         canonical = self.make_reply().model_dump()
         if hasattr(proposal, "model_dump"):
@@ -91,7 +97,7 @@ class ReplyBuilder:
         if not isinstance(rows, list):
             rows = []
             s.evidence_corrections += 1
-        proposed = {}
+        proposed: dict[str, dict[str, Any]] = {}
         for hospital in rows:
             if not isinstance(hospital, dict) or not isinstance(hospital.get("hpid"), str):
                 s.evidence_corrections += 1

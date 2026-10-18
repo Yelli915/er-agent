@@ -1,7 +1,7 @@
 """Validated display contract for the real agent boundary."""
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -62,6 +62,8 @@ class Backend(Protocol):
     user_id: str
     profile: ERFinderStore
 
+    def status(self) -> Any: ...
+    def connect(self, *, transport: str = "car") -> Any: ...
     def chat(self, text: str, *, transport: str, force_refresh: bool = False) -> WebResult: ...
     def select_hospital(self, hpid: str) -> WebResult: ...
     def approve(self, approved: bool) -> WebResult: ...

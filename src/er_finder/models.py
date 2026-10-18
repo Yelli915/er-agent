@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DISCLAIMER = "응급실 상황은 수시로 변하므로 방문 전 전화 확인을 권장합니다"
+DISCLAIMER: Final = "응급실 상황은 수시로 변하므로 방문 전 전화 확인을 권장합니다"
 EMERGENCY = "119에 즉시 신고하세요. 검색 결과를 기다리지 마세요."
 Severity = Literal["critical", "urgent", "standard"]
 Condition = Literal["심근경색", "뇌출혈", "뇌졸중", "중증외상", "화상", "분만"]
@@ -24,9 +24,12 @@ class TriageAssessment(StrictModel):
     @model_validator(mode="after")
     def conservative(self) -> Self:
         if self.confidence < 0.6 and not self.confidence_escalated:
-            self.severity = {"standard": "urgent", "urgent": "critical", "critical": "critical"}[
-                self.severity
-            ]
+            escalated: dict[Severity, Severity] = {
+                "standard": "urgent",
+                "urgent": "critical",
+                "critical": "critical",
+            }
+            self.severity = escalated[self.severity]
             self.confidence_escalated = True
         if self.severity == "standard" and self.condition is not None:
             raise ValueError("standard cannot have a severe condition")

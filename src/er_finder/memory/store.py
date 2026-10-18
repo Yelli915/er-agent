@@ -12,7 +12,7 @@ from __future__ import annotations
 import threading
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from langgraph.store.base import BaseStore
 
@@ -106,7 +106,7 @@ class ERFinderStore:
             raise ValueError("limit은 0 이상이어야 합니다.")
         if limit == 0:
             return []
-        visits = []
+        visits: list[Any] = []
         page_size = 100
         offset = 0
         while True:

@@ -67,6 +67,16 @@ class RunnerBackend:
         self._category = "not_connected"
         self._reply: UIReply | None = None
         self._pending: PendingVisitPlan | None = None
+        self._progress: Callable[[str], None] | None = None
+
+    def set_progress(self, listener: Callable[[str], None] | None) -> None:
+        """Show search steps while a request runs; applied to the runner per request."""
+        self._progress = listener
+
+    def _attach_progress(self) -> None:
+        setter = getattr(self._runner, "set_progress", None)
+        if callable(setter):
+            setter(self._progress)
 
     def status(self) -> ConnectionStatus:
         return ConnectionStatus(
@@ -161,7 +171,7 @@ class RunnerBackend:
             hospital = next((item for item in hospitals if item.hpid == hpid), None)
             if hospital is None or hospital.name != name or selected != hpid:
                 raise ConnectionUnavailable("contract")
-            pending = PendingVisitPlan(hpid=hpid, name=name, symptom_summary=summary)
+            pending = PendingVisitPlan(hpid=str(hpid), name=str(name), symptom_summary=str(summary))
         note = getattr(result, "note", None)
         if note is not None and not isinstance(note, str):
             raise ConnectionUnavailable("contract")
@@ -181,6 +191,7 @@ class RunnerBackend:
             return WebResult(note=self.status().message)
         self._pending = None
         try:
+            self._attach_progress()
             return self._receive(self._runner.chat(text, force_refresh=force_refresh))
         except ConnectionUnavailable as exc:
             return self._failed(exc.category)
@@ -199,6 +210,7 @@ class RunnerBackend:
                 note="현재 방문 계획의 승인 또는 거절을 먼저 완료해 주세요.",
             )
         try:
+            self._attach_progress()
             return self._receive(self._runner.chat(f"{index + 1}번"), selected=hpid)
         except ConnectionUnavailable as exc:
             return self._failed(exc.category)

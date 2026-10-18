@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 from er_finder.memory.store import ERFinderStore, VisitRecord
 
@@ -48,7 +49,7 @@ class VisitPlanResult:
     visit_id: str | None = None
     reason: str | None = None
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return {"saved": self.saved, "visit_id": self.visit_id}
 
 

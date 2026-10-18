@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib
 import os
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -72,6 +73,9 @@ class ManagedRunner:
 
     def approve(self, approved: bool) -> Any:
         return self._runner.approve(approved)
+
+    def set_progress(self, listener: Callable[[str], None] | None) -> None:
+        self._runner.on_progress = listener
 
     def end_session(self) -> None:
         try:

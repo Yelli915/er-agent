@@ -1,6 +1,7 @@
 """Real API lookup and agent conversation, with private browser session state."""
 
 from collections.abc import Callable
+from typing import Any
 
 import streamlit as st
 
@@ -89,7 +90,7 @@ def _forget(web: WebSession) -> None:
     def forget_all() -> None:
         web.forget()
         for key in list(st.session_state):
-            if key.startswith("api_"):
+            if isinstance(key, str) and key.startswith("api_"):
                 del st.session_state[key]
 
     _perform(forget_all, "대화·저장 정보와 API 조회 기록을 모두 삭제했습니다.")
@@ -153,7 +154,7 @@ def _location_controls(web: WebSession) -> None:
     _sync_context(web)
 
 
-def _connection_controls(web: WebSession):
+def _connection_controls(web: WebSession) -> Any:
     status = web.backend.status()
     st.caption("● 에이전트 연결됨" if status.connected else "○ 에이전트 연결 확인 필요")
     st.button(
@@ -168,7 +169,7 @@ def _connection_controls(web: WebSession):
     return status
 
 
-def _conversation_controls(web: WebSession, status) -> None:
+def _conversation_controls(web: WebSession, status: Any) -> None:
     left, right = st.columns(2)
     left.button(
         "새 대화",
@@ -311,8 +312,16 @@ def _conversation(web: WebSession) -> None:
     if text:
         if assess_input(text).triage.severity == "critical":
             st.error(EMERGENCY)
-        with st.spinner("응급실 정보를 확인하고 있습니다…"):
-            _perform_current(web, lambda: web.submit(text), allow_changed=True)
+        with st.status("응급실 정보를 확인하고 있습니다…", expanded=True) as progress:
+            set_progress = getattr(web.backend, "set_progress", None)
+            if callable(set_progress):
+                set_progress(lambda line: progress.write(f"✓ {line}"))
+            try:
+                _perform_current(web, lambda: web.submit(text), allow_changed=True)
+            finally:
+                if callable(set_progress):
+                    set_progress(None)
+            progress.update(label="확인을 마쳤습니다", state="complete", expanded=False)
         st.rerun()
 
 

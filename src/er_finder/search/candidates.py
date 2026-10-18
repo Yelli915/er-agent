@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 
 from er_finder.guardrails.evidence import safe_data
 from er_finder.models import HospitalCandidate
@@ -17,8 +18,15 @@ def is_stale(timestamp: str | None, now: datetime) -> bool:
         return True
 
 
-def select_candidates(facilities, beds, acceptance, details, condition, now):
-    selected = []
+def select_candidates(
+    facilities: dict[str, dict[str, Any]],
+    beds: dict[str, dict[str, Any]],
+    acceptance: dict[str, dict[str, Any]],
+    details: dict[str, dict[str, Any]],
+    condition: str | None,
+    now: datetime,
+) -> list[HospitalCandidate]:
+    selected: list[HospitalCandidate] = []
     for hpid, facility in facilities.items():
         bed = beds.get(hpid, {})
         count = bed.get("er_beds_available")

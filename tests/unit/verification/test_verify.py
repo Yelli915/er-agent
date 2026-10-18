@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -137,7 +138,9 @@ def test_report_preserves_pytest_exit_and_does_not_claim_integration(
 def test_timeout_replaces_stale_junit_and_preserves_partial_log(verify, tmp_path, monkeypatch):
     output = tmp_path / "results"
     output.mkdir()
-    (output / "junit.xml").write_text('<testsuite><testcase name="old"/></testsuite>')
+    (output / "junit.xml").write_text(
+        '<testsuite><testcase name="old"/></testsuite>', encoding="utf-8"
+    )
 
     def run(command, **kwargs):
         if command[0] == "git":
@@ -146,10 +149,10 @@ def test_timeout_replaces_stale_junit_and_preserves_partial_log(verify, tmp_path
 
     monkeypatch.setattr(verify.subprocess, "run", run)
     assert verify.run_verification(tmp_path, output, timeout=0.01, require_integration=False) != 0
-    report = json.loads((output / "report.json").read_text())
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert report["local_tests"]["status"] == "TIMEOUT"
     assert report["local_tests"]["counts"] is None
-    assert "partial output" in (output / "pytest.log").read_text()
+    assert "partial output" in (output / "pytest.log").read_text(encoding="utf-8")
     assert not (output / "junit.xml").exists()
 
 
@@ -159,7 +162,9 @@ def test_require_integration_fails_even_when_local_tests_pass(verify, tmp_path, 
     def run(command, **kwargs):
         if command[0] == "git":
             return subprocess.CompletedProcess(command, 0, "abc123\n", "")
-        (output / "junit.xml").write_text('<testsuite><testcase name="ok"/></testsuite>')
+        (output / "junit.xml").write_text(
+            '<testsuite><testcase name="ok"/></testsuite>', encoding="utf-8"
+        )
         return subprocess.CompletedProcess(command, 0, "1 passed", "")
 
     monkeypatch.setattr(verify.subprocess, "run", run)
@@ -254,7 +259,7 @@ def test_runner_executes_a_small_offline_suite_and_excludes_live_tests(verify, t
     )
     output = tmp_path / "results"
     assert verify.run_verification(tmp_path, output, timeout=15, require_integration=False) == 0
-    report = json.loads((output / "report.json").read_text())
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert report["local_tests"]["counts"] == {
         "total": 1,
         "passed": 1,
@@ -262,7 +267,7 @@ def test_runner_executes_a_small_offline_suite_and_excludes_live_tests(verify, t
         "errors": 0,
         "skipped": 0,
     }
-    assert "1 deselected" in (output / "pytest.log").read_text()
+    assert "1 deselected" in (output / "pytest.log").read_text(encoding="utf-8")
 
 
 def test_runner_does_not_pass_a_real_suite_when_every_test_is_skipped(verify, tmp_path):
@@ -283,7 +288,7 @@ def test_runner_does_not_pass_a_real_suite_when_every_test_is_skipped(verify, tm
     )
     output = tmp_path / "results"
     code = verify.run_verification(tmp_path, output, timeout=15, require_integration=False)
-    report = json.loads((output / "report.json").read_text())
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert report["local_tests"]["counts"] == {
         "total": 1,
         "passed": 0,
@@ -302,6 +307,9 @@ def test_benchmark_refuses_to_call_live_apis_without_opt_in():
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONUTF8": "1"},
         timeout=5,
     )
     assert result.returncode == 2
@@ -315,11 +323,15 @@ def test_collection_error_still_reports_independent_test_results(verify, tmp_pat
     (scripts / "verify.py").write_text(
         (ROOT / "scripts" / "verify.py").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    (tmp_path / "test_good.py").write_text("def test_available():\n    assert 2 + 2 == 4\n")
-    (tmp_path / "test_broken.py").write_text("raise ImportError('missing team interface')\n")
+    (tmp_path / "test_good.py").write_text(
+        "def test_available():\n    assert 2 + 2 == 4\n", encoding="utf-8"
+    )
+    (tmp_path / "test_broken.py").write_text(
+        "raise ImportError('missing team interface')\n", encoding="utf-8"
+    )
     output = tmp_path / "results"
     assert verify.run_verification(tmp_path, output, timeout=15, require_integration=False) == 1
-    report = json.loads((output / "report.json").read_text())
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert report["local_tests"]["status"] == "FAIL"
     assert report["local_tests"]["counts"] == {
         "total": 2,

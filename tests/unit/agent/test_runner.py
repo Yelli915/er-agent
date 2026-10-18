@@ -295,3 +295,35 @@ def test_disabling_server_planned_calls_restores_a_model_call_per_step(make_find
     assert result.reply.hospitals
     # geocode, list, beds, details and the final reply each need a model turn again.
     assert result.diagnostics.model_calls == 5
+
+
+def test_progress_listener_sees_search_steps_and_result_matches_plain_run(make_finder):
+    lines = []
+    streamed = make_finder(on_progress=lines.append).chat("강남구 역삼동 발목이 아파요")
+    plain = make_finder().chat("강남구 역삼동 발목이 아파요")
+    assert lines[0] == "위치를 확인했습니다"
+    assert "병상 현황을 확인했습니다" in lines
+    assert lines[-1] == "답변을 정리하고 있습니다"
+    # Timestamps come from the clock, so compare the verified content only.
+    assert [(h.hpid, h.distance_km, h.er_beds_available) for h in streamed.reply.hospitals] == [
+        (h.hpid, h.distance_km, h.er_beds_available) for h in plain.reply.hospitals
+    ]
+    assert streamed.reply.next_action == plain.reply.next_action
+
+
+def test_progress_streaming_keeps_hitl_interrupt_and_single_write(make_finder):
+    finder = make_finder(on_progress=lambda line: None)
+    finder.chat("강남구 역삼동 발목이 아파요")
+    selected = finder.chat("1번")
+    assert selected.pending_approval is not None
+    assert finder.profiles.get_recent_visits() == []
+    assert finder.approve(True).pending_approval is None
+    assert len(finder.profiles.get_recent_visits()) == 1
+
+
+def test_failing_progress_listener_does_not_abort_the_search(make_finder):
+    def broken(line):
+        raise RuntimeError("display closed")
+
+    result = make_finder(on_progress=broken).chat("강남구 역삼동 발목이 아파요")
+    assert result.reply.hospitals

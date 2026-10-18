@@ -1,7 +1,9 @@
 """Run the real LangGraph agent using the shared memory and search implementations."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import perf_counter
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import merge_configs
@@ -13,13 +15,14 @@ from langgraph.types import Command
 from er_finder.agent.adapters import VisitSelection, selected_index
 from er_finder.agent.diagnostics import RunDiagnostics, error_metadata
 from er_finder.agent.graph import build_graph
+from er_finder.agent.progress import ProgressCallback, progress_lines
 from er_finder.agent.renderer import render_reply
 from er_finder.guardrails.evidence import safe_data
-from er_finder.guardrails.input_guard import assess_input
+from er_finder.guardrails.input_guard import InputAssessment, assess_input
 from er_finder.guardrails.middleware import ModelCounter
 from er_finder.guardrails.pii import mask_pii
 from er_finder.guardrails.triage import InputClassifier
-from er_finder.memory.context import ERFinderContext
+from er_finder.memory.context import ERFinderContext, TransportMode
 from er_finder.memory.session import SessionManager
 from er_finder.memory.store import ERFinderStore
 from er_finder.messages import (
@@ -47,7 +50,7 @@ RECENT_VISIT_MARKERS = ("지난번", "최근 방문")
 class ChatResult:
     reply: ERSearchReply
     text: str
-    pending_approval: dict | None = None
+    pending_approval: dict[str, Any] | None = None
     note: str | None = None
     diagnostics: RunDiagnostics | None = None
 
@@ -55,16 +58,18 @@ class ChatResult:
 class ERFinder:
     def __init__(
         self,
-        provider,
-        model=None,
-        classifier=None,
-        user_id="local-user",
-        transport="car",
-        store=None,
-        checkpointer=None,
-        on_emergency=None,
-        server_planned_calls=True,
-    ):
+        provider: Any,
+        model: Any = None,
+        classifier: Any = None,
+        user_id: str = "local-user",
+        transport: TransportMode = "car",
+        store: Any = None,
+        checkpointer: Any = None,
+        on_emergency: Callable[[str], None] | None = None,
+        server_planned_calls: bool = True,
+        on_progress: ProgressCallback | None = None,
+    ) -> None:
+        self.on_progress = on_progress
         self.context = ERFinderContext(user_id, transport)
         self.session = SearchSession(provider, transport)
         self.store = store if store is not None else InMemoryStore()
@@ -96,11 +101,11 @@ class ERFinder:
         )
         self.run_config = self.session_manager.build_config(user_id)
         self.run_config["configurable"].update(session=self.session, visit=self.visit)
-        self.last_reply = None
+        self.last_reply: ERSearchReply | None = None
         self.pending = False
         self.mode = "search"
-        self.last_diagnostics = None
-        self.last_error_type = None
+        self.last_diagnostics: RunDiagnostics | None = None
+        self.last_error_type: str | None = None
         self._session_model_calls = 0
         self._classifier_usage = ClassifierUsage()
 
@@ -117,7 +122,7 @@ class ERFinder:
             self.visit.reset()
         history_note = self._history_note(text)
         if selected is not None:
-            if selected >= len(self.last_reply.hospitals):
+            if self.last_reply is None or selected >= len(self.last_reply.hospitals):
                 raise ValueError(PICK_LISTED_CANDIDATE)
             self.mode = "visit"
             self.visit.prepare(self.last_reply.hospitals[selected], self.session.symptom_text)
@@ -132,7 +137,7 @@ class ERFinder:
             )
         return self._run_graph({"messages": [HumanMessage(content=text)]}, history_note)
 
-    def _assess(self, text: str):
+    def _assess(self, text: str) -> tuple[InputAssessment, int | None]:
         """Return (assessment, chosen candidate index or None); alert once on critical input."""
         rules = assess_input(text)
         alerted = rules.triage.severity == "critical"
@@ -178,18 +183,14 @@ class ERFinder:
         )
         return self._run_graph(Command(resume={"decisions": [decision]}))
 
-    def _run_graph(self, inputs, history_note=None) -> ChatResult:
+    def _run_graph(self, inputs: Any, history_note: str | None = None) -> ChatResult:
         started = perf_counter()
         usage = RunUsage()
         succeeded = False
         error_info = None
         self.last_error_type = None
         try:
-            output = self.graph.invoke(
-                inputs,
-                config=merge_configs(self.run_config, {"callbacks": [usage]}),
-                context=self.context,
-            )
+            output = self._execute(inputs, merge_configs(self.run_config, {"callbacks": [usage]}))
             self.pending = bool(output.get("__interrupt__"))
             reply = self.session.check_evidence(output.get("structured_response"))
             note = self.session.assessment.reason or history_note
@@ -231,7 +232,28 @@ class ERFinder:
             diagnostics=self.last_diagnostics,
         )
 
-    def end_session(self):
+    def _execute(self, inputs: Any, config: Any) -> dict[str, Any]:
+        """Run the graph; with a progress listener, stream updates and read the final state."""
+        if self.on_progress is None:
+            output: dict[str, Any] = self.graph.invoke(inputs, config=config, context=self.context)
+            return output
+        for chunk in self.graph.stream(
+            inputs, config=config, context=self.context, stream_mode="updates"
+        ):
+            self._notify(chunk)
+        state = self.graph.get_state(self.run_config)
+        return {**state.values, "__interrupt__": state.interrupts}
+
+    def _notify(self, chunk: Any) -> None:
+        for line in progress_lines(chunk):
+            try:
+                if self.on_progress is not None:
+                    self.on_progress(line)
+            except Exception:
+                # A failing display must not abort a search that may already have written.
+                self.on_progress = None
+
+    def end_session(self) -> None:
         self.session_manager.end_session(self.context.user_id)
         self.session.clear()
         self.visit.reset()
@@ -242,7 +264,7 @@ class ERFinder:
         self.last_error_type = None
         self._session_model_calls = 0
 
-    def close(self):
+    def close(self) -> None:
         try:
             self.end_session()
         finally:

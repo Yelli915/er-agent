@@ -1,19 +1,25 @@
 """Workflow ordering: which tool calls the server accepts next."""
 
+from typing import TYPE_CHECKING, Any
+
 from er_finder.messages import (
     TOOL_ORDER_MISMATCH,
 )
+from er_finder.models import HospitalCandidate
 from er_finder.search.candidates import select_candidates
 from er_finder.search.errors import ToolOrderError
+
+if TYPE_CHECKING:
+    from er_finder.search.service import SearchSession
 
 
 class CallPlanner:
     """Decides the next server-approved calls from a SearchSession's state."""
 
-    def __init__(self, session):
+    def __init__(self, session: "SearchSession") -> None:
         self.session = session
 
-    def regions(self):
+    def regions(self) -> list[dict[str, str]]:
         s = self.session
         return [
             dict(sido=sido, sigungu=sigungu)
@@ -26,7 +32,7 @@ class CallPlanner:
             )
         ]
 
-    def refresh_candidates(self):
+    def refresh_candidates(self) -> list[HospitalCandidate]:
         s = self.session
         if s.lookup_error:
             s.candidates = []
@@ -41,7 +47,7 @@ class CallPlanner:
         )
         return s.candidates
 
-    def next_calls(self):
+    def next_calls(self) -> list[dict[str, Any]]:
         s = self.session
         if s.lookup_error:
             return []
@@ -116,6 +122,6 @@ class CallPlanner:
             if h.hpid not in s.details
         ]
 
-    def _require(self, name, arguments):
+    def _require(self, name: str, arguments: dict[str, Any]) -> None:
         if not any(c["name"] == name and c["args"] == arguments for c in self.next_calls()):
             raise ToolOrderError(TOOL_ORDER_MISMATCH)

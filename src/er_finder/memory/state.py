@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 
 class Location(TypedDict):
@@ -62,7 +62,7 @@ class ERFinderState:
     Context와 달리 매 turn 값이 바뀌는 게 정상이라 frozen을 걸지 않았다.
     """
 
-    messages: list[dict] = field(default_factory=list)
+    messages: list[dict[str, Any]] = field(default_factory=list)
     current_location: Location | None = None
     triage: TriageState | None = None
     search_radius_km: int = 5

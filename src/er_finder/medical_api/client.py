@@ -12,6 +12,7 @@ import os
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import Any
 from urllib.parse import unquote
 
 import httpx
@@ -24,7 +25,7 @@ from . import cache, parser
 load_dotenv()
 
 
-def _bounded_number(value: object, default: float, lower: float, upper: float) -> float:
+def _bounded_number(value: Any, default: float, lower: float, upper: float) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
@@ -62,7 +63,7 @@ class _ServiceKeyFilter(logging.Filter):
 
 
 _httpx_logger = logging.getLogger("httpx")
-if not any(item.name == "egen-service-key" for item in _httpx_logger.filters):
+if not any(getattr(item, "name", None) == "egen-service-key" for item in _httpx_logger.filters):
     _httpx_logger.addFilter(_ServiceKeyFilter("egen-service-key"))
 
 
@@ -82,18 +83,18 @@ CONDITION_TO_MKIOSKTY = {
 }
 
 
-def _build_params(extra: dict, num_of_rows: int = 100) -> dict:
+def _build_params(extra: dict[str, Any], num_of_rows: int = 100) -> dict[str, Any]:
     return {"serviceKey": SERVICE_KEY, "pageNo": 1, "numOfRows": num_of_rows, **extra}
 
 
-def _region_params(sido: str, sigungu: str) -> dict:
+def _region_params(sido: str, sigungu: str) -> dict[str, Any]:
     params = {"STAGE1": parser.normalize_sido(sido)}
     if sigungu:
         params["STAGE2"] = sigungu
     return params
 
 
-def _call(endpoint: str, params: dict) -> str:
+def _call(endpoint: str, params: dict[str, Any]) -> str:
     try:
         if not SERVICE_KEY.strip():
             raise EgenAPIError()
@@ -111,7 +112,7 @@ def _call(endpoint: str, params: dict) -> str:
         raise EgenAPIError() from None
 
 
-def _request(endpoint: str, extra: dict, parse: Callable) -> list | dict:
+def _request(endpoint: str, extra: dict[str, Any], parse: Callable[[str], Any]) -> Any:
     try:
         return parse(_call(endpoint, _build_params(extra)))
     except parser.EgenResponseError:
@@ -119,8 +120,13 @@ def _request(endpoint: str, extra: dict, parse: Callable) -> list | dict:
 
 
 def _lookup(
-    endpoint: str, extra: dict, parse: Callable, *, default: list | dict, raise_on_error: bool
-) -> list | dict:
+    endpoint: str,
+    extra: dict[str, Any],
+    parse: Callable[[str], Any],
+    *,
+    default: list[Any] | dict[str, Any],
+    raise_on_error: bool,
+) -> Any:
     """Return the parsed rows, or the empty default unless the caller wants the failure."""
     try:
         return _request(endpoint, extra, parse)
@@ -143,7 +149,7 @@ def _is_stale(beds_updated_at: str | None) -> bool:
         return True
 
 
-def _cached_detail(detail_cache: dict, hpid: str) -> dict | None:
+def _cached_detail(detail_cache: dict[str, Any], hpid: str) -> dict[str, Any] | None:
     record = cache.get(detail_cache, hpid, ttl=DETAIL_CACHE_TTL)
     if record is not None and record["lookup_failed"]:
         return cache.get(detail_cache, hpid, ttl=DETAIL_FAILURE_TTL)
@@ -155,9 +161,9 @@ def list_nearby_ers(
     lon: float,
     radius_km: int = 5,
     *,
-    detail_cache: dict | None = None,
+    detail_cache: dict[str, Any] | None = None,
     raise_on_error: bool = False,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     rows = _lookup(
         "/getEgytLcinfoInqire",
         {"WGS84_LAT": lat, "WGS84_LON": lon},
@@ -202,10 +208,10 @@ def get_er_bed_status(
     sido: str,
     sigungu: str,
     hpids: list[str],
-    bed_cache: dict | None = None,
+    bed_cache: dict[str, Any] | None = None,
     *,
     raise_on_error: bool = False,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     if bed_cache is None:
         bed_cache = {}
     key = cache.make_key(parser.normalize_sido(sido), sigungu)
@@ -248,7 +254,7 @@ def get_er_bed_status(
     return result
 
 
-def _combine_mkioskty(mkioskty: dict, codes: list[int]) -> bool | None:
+def _combine_mkioskty(mkioskty: dict[int, Any], codes: list[int]) -> bool | None:
     values = [mkioskty.get(code) for code in codes]
     if any(value is True for value in values):
         return True
@@ -259,7 +265,7 @@ def _combine_mkioskty(mkioskty: dict, codes: list[int]) -> bool | None:
 
 def get_severe_acceptance(
     sido: str, sigungu: str, condition: str, *, raise_on_error: bool = False
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     codes = CONDITION_TO_MKIOSKTY.get(condition)
     if not codes:
         return []
@@ -282,8 +288,8 @@ def get_severe_acceptance(
 
 
 def get_er_detail(
-    hpid: str, *, detail_cache: dict | None = None, raise_on_error: bool = False
-) -> dict:
+    hpid: str, *, detail_cache: dict[str, Any] | None = None, raise_on_error: bool = False
+) -> dict[str, Any]:
     if detail_cache is not None:
         record = _cached_detail(detail_cache, hpid)
         if record is not None:
@@ -291,6 +297,7 @@ def get_er_detail(
                 raise EgenAPIError()
             return dict(record["data"])
     lookup_failed = False
+    detail: dict[str, Any]
     try:
         detail = _request("/getEgytBassInfoInqire", {"HPID": hpid}, parser.parse_er_detail)
         if detail.get("hpid") and detail["hpid"] != hpid:

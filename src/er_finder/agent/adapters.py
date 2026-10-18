@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import re
 from threading import RLock
+from typing import Any
 
 from langchain.agents import AgentState
 
 from er_finder.guardrails.pii import mask_pii
 from er_finder.memory.store import ERFinderStore
-from er_finder.memory.visit_plan import PendingVisitPlan, VisitPlanService, VisitPlanStatus
+from er_finder.memory.visit_plan import (
+    PendingVisitPlan,
+    VisitPlanResult,
+    VisitPlanService,
+    VisitPlanStatus,
+)
 from er_finder.messages import (
     VISIT_ALREADY_DECIDED,
     VISIT_APPROVAL_REQUIRED,
@@ -24,10 +30,10 @@ from er_finder.models import ERSearchReply, HospitalCandidate
 
 
 class ERGraphState(AgentState[ERSearchReply], total=False):
-    current_location: dict | None
-    triage: dict
+    current_location: dict[str, Any] | None
+    triage: dict[str, Any]
     search_radius_km: int
-    candidates: list[dict]
+    candidates: list[dict[str, Any]]
 
 
 def selected_index(text: str) -> int | None:
@@ -41,7 +47,7 @@ def selected_index(text: str) -> int | None:
 class VisitSelection:
     """Keep the selected evidence and one explicit approval outside model control."""
 
-    def __init__(self, profiles: ERFinderStore, session):
+    def __init__(self, profiles: ERFinderStore, session: Any) -> None:
         self._service = VisitPlanService(profiles)
         self._session = session
         self._lock = RLock()
@@ -54,10 +60,10 @@ class VisitSelection:
             self.approved = False
             self.decided = False
             self.saved = False
-            self.result = None
+            self.result: VisitPlanResult | None = None
 
     @property
-    def pending(self) -> dict | None:
+    def pending(self) -> dict[str, Any] | None:
         if self._plan is None:
             return None
         return {
@@ -81,7 +87,7 @@ class VisitSelection:
             )
             self._search_timestamp = self._session.data_timestamp
 
-    def validate(self, arguments: dict) -> None:
+    def validate(self, arguments: dict[str, Any]) -> None:
         with self._lock:
             if self._plan is None or self._plan.status is not VisitPlanStatus.PENDING or self.saved:
                 raise ValueError(VISIT_NO_SAVABLE_PLAN)
@@ -97,18 +103,24 @@ class VisitSelection:
 
     def authorize(self, approved: bool) -> None:
         with self._lock:
-            self.validate(self.pending)
+            pending = self.pending
+            if pending is None:
+                raise ValueError(VISIT_NO_SAVABLE_PLAN)
+            self.validate(pending)
             if self.decided:
                 raise ValueError(VISIT_ALREADY_DECIDED)
             self.approved, self.decided = approved, True
-            if not approved:
+            if not approved and self._plan is not None:
                 self.result = self._service.decide(self._plan, approved=False)
 
-    def save(self, hpid: str, name: str, symptom_summary: str) -> dict:
+    def save(self, hpid: str, name: str, symptom_summary: str) -> dict[str, Any]:
         with self._lock:
             self.validate(dict(hpid=hpid, name=name, symptom_summary=symptom_summary))
             if not self.decided or not self.approved:
                 raise ValueError(VISIT_APPROVAL_REQUIRED)
-            self.result = self._service.decide(self._plan, approved=True)
-            self.saved = self.result.saved
-            return self.result.as_dict()
+            if self._plan is None:
+                raise ValueError(VISIT_NO_SAVABLE_PLAN)
+            result = self._service.decide(self._plan, approved=True)
+            self.result = result
+            self.saved = result.saved
+            return result.as_dict()

@@ -174,7 +174,9 @@ def test_compare_renders_numbers_from_both_summaries():
 
 def test_cli_compare_reads_saved_json(tmp_path):
     path = tmp_path / "a.json"
-    path.write_text(json.dumps({"summary": {"standard": summarize([_record(2.0)])}}))
+    path.write_text(
+        json.dumps({"summary": {"standard": summarize([_record(2.0)])}}), encoding="utf-8"
+    )
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "benchmark.py"), "--compare", str(path), str(path)],
         capture_output=True,

@@ -11,11 +11,13 @@ import pytest
 from er_finder.evaluation import golden
 from er_finder.guardrails.input_guard import assess_input
 
+# crit-/urg-/std-01~22 and blk-01~07 were used to tune the rules; the later ids (crit-23+,
+# urg-09+, std-22+, blk-08+) were written afterwards and are the held-out gaps listed here.
 KNOWN_RULE_UNDER_TRIAGE = {
-    "crit-13", "crit-14", "crit-18", "crit-19", "crit-20", "urg-07", "urg-08",
+    "crit-27", "crit-28", "crit-30", "urg-09", "urg-11", "urg-13", "urg-14",
 }  # fmt: skip
-KNOWN_RULE_WRONG_CONDITION = {"crit-06", "crit-10", "crit-13"}
-KNOWN_RULE_MISSED_BLOCKS = {"blk-06"}
+KNOWN_RULE_WRONG_CONDITION = {"crit-25", "crit-30", "urg-13", "urg-14"}
+KNOWN_RULE_MISSED_BLOCKS = {"blk-08"}
 
 
 @pytest.fixture(scope="module")

@@ -1,8 +1,10 @@
 """Format the runner reply without importing the domain model or making API calls."""
 
+from typing import Any
 
-def render_reply(reply, *, note=None, pending=None) -> str:
-    lines = []
+
+def render_reply(reply: Any, *, note: str | None = None, pending: Any = None) -> str:
+    lines: list[str] = []
     if reply.call_119_first:
         lines.append("119에 즉시 신고하세요. 검색 결과를 기다리지 마세요.")
     if note:

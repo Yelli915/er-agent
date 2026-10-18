@@ -1,8 +1,14 @@
 # ER Finder · skala-er-agent
 
+> **한눈에 보기**
+> - 무엇을: 위치와 증상을 받아 근처 응급실(병상·중증 수용 여부)을 찾아 주는 대화형 에이전트
+> - 구성: 카카오(주소→좌표) + E-Gen(병상·수용) + OpenAI(LangGraph 에이전트) + Streamlit 화면
+> - 안전: 위급 입력은 모델 호출 전에 119 안내, 병원 정보는 API 근거만 사용, 저장은 사람 승인 후에만
+> - 실행: `uv run --frozen python scripts/run_local.py` → http://localhost:8503
+
 카카오·E-Gen·OpenAI API를 연결하는 응급의료기관 조회와 에이전트 상담 화면입니다. 의료기관 직접 조회와 에이전트 상담은 별도 경로로 실행됩니다. 화면에 표시할 기관 정보는 실제 API 응답을 사용합니다.
 
-`main`의 `00971aa`를 기준으로 실제 메모리·LangGraph·의료 API 연결을 수정했습니다. 좌표로 직접 조회하면 카카오 없이 사용할 수 있습니다. 최신 실행 결과는 [검증 기록](docs/verification.md)에 기록합니다.
+`main`의 `00971aa`에서 분기한 `v2/refactor`(`e9673c4`)를 기준으로 실제 메모리·LangGraph·의료 API 연결을 수정했습니다. 좌표로 직접 조회하면 카카오 없이 사용할 수 있습니다. 최신 실행 결과는 [검증 기록](docs/verification.md)에 기록합니다.
 
 ## 실행
 
@@ -62,9 +68,16 @@ python scripts/eval_golden.py [--live]      # 위급도 골든셋(tests/fixtures
 ER_RUN_LIVE=1 pytest tests/live -m live     # 실제 E-Gen·OpenAI 계약 점검(매일 CI에서도 실행)
 ```
 
-`--prices`는 예시 값이 아니라 사용 중인 모델의 실제 단가(USD/1M 토큰)로 바꿔야 합니다. Windows에서는 `PYTHONUTF8=1`을 설정하세요.
+`--prices`는 예시 값이 아니라 사용 중인 모델의 실제 단가(USD/1M 토큰)로 바꿔야 합니다. Windows에서 스크립트를 직접 실행할 때는 `PYTHONUTF8=1`을 설정하세요(테스트는 인코딩을 명시하므로 필요 없습니다). 상담 화면은 검색 단계(위치·병상·상세 확인)를 진행 상태로 보여 줍니다.
 
 `verification-results/report.json`, `junit.xml`, `pytest.log`에 실행 근거를 저장합니다. 전체 연결을 검증하지 못하면 `integration.status`는 BLOCKED 또는 NOT_VERIFIED이며, 파일이 존재하거나 단위 테스트가 통과한 것만으로 통합 PASS를 표시하지 않습니다. 추천 정확도는 미측정이며, 지연 시간의 단일 실행 실측은 [검증 기록](docs/verification.md)을 따릅니다.
+
+## 알려진 한계
+
+- **임상 검증 없음.** 위급도 라벨은 합성 자료이며 의료진 검토를 받지 않았다. 추천의 임상적 적절성은 측정하지 않았다. 규칙 기반 분류의 오프라인 수치는 [검증 기록 1.4](docs/verification.md)를 따른다.
+- **지연 시간.** 단일 실행 기준 검색에 약 15~21초가 걸린다(외부 API와 모델 호출 포함). 화면은 진행 중 표시만 제공한다.
+- **영속성 없음.** 체크포인터와 프로필 저장소는 서버 메모리다. 위치 정보를 서버에 남기지 않는 설계 선택이며, 재시작하면 대화와 방문 기록이 사라진다. `ERFinder`는 `store`와 `checkpointer`를 주입받으므로 영구 저장소로 교체할 수 있으나, 개인정보 보관 정책을 먼저 정해야 한다.
+- **중증외상 수용 여부는 확인하지 않는다.** E-Gen 중증질환 코드에 대응 항목이 없어 '확인 불가'로 표시한다.
 
 ## 담당과 문서
 

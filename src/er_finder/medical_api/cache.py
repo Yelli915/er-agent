@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import time
-from typing import TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
@@ -35,7 +35,7 @@ def save(cache: dict[str, tuple[T, float]], key: str, value: T) -> None:
     cache[key] = (value, time.time())
 
 
-def make_stale(rows: list) -> list:
+def make_stale(rows: list[Any]) -> list[Any]:
     """캐시를 폴백으로 쓸 때 각 병원 dict에 stale=True를 강제로 붙인다"""
     result = []
     for row in rows:

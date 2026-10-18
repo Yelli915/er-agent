@@ -37,7 +37,7 @@ def medical(monkeypatch):
             "/getSrsillDissAceptncPosblInfoInqire": "severe_gangnam.xml",
             "/getEgytBassInfoInqire": "detail_A1100057.xml",
         }
-        return (fixtures / files[endpoint]).read_text()
+        return (fixtures / files[endpoint]).read_text(encoding="utf-8")
 
     monkeypatch.setattr(module, "_call", response)
     return module, calls

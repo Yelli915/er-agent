@@ -10,6 +10,7 @@ import math
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 KOREA_TZ = ZoneInfo("Asia/Seoul")
@@ -141,7 +142,7 @@ def get_items(xml_text: str) -> list[ET.Element]:
     return items_element.findall("item")
 
 
-def parse_nearby(xml_text: str) -> list[dict]:
+def parse_nearby(xml_text: str) -> list[dict[str, Any]]:
     """위치정보 조회(getEgytLcinfoInqire) 응답 -> list_nearby_ers용 dict 목록."""
     result = []
     for item in get_items(xml_text):
@@ -165,7 +166,7 @@ def parse_nearby(xml_text: str) -> list[dict]:
     return result
 
 
-def parse_bed_status(xml_text: str) -> list[dict]:
+def parse_bed_status(xml_text: str) -> list[dict[str, Any]]:
     """실시간 가용병상 조회(getEmrrmRltmUsefulSckbdInfoInqire) 응답 -> dict 목록."""
     result = []
     for item in get_items(xml_text):
@@ -180,7 +181,7 @@ def parse_bed_status(xml_text: str) -> list[dict]:
     return result
 
 
-def parse_severe(xml_text: str) -> list[dict]:
+def parse_severe(xml_text: str) -> list[dict[str, Any]]:
     """중증질환자 수용가능정보 조회(getSrsillDissAceptncPosblInfoInqire) 응답 -> dict 목록.
 
     mkioskty1~28을 전부 True/False/None으로 바꿔서 "mkioskty" 안에 번호별로 담는다.
@@ -204,7 +205,7 @@ def parse_severe(xml_text: str) -> list[dict]:
     return result
 
 
-def parse_er_detail(xml_text: str) -> dict:
+def parse_er_detail(xml_text: str) -> dict[str, Any]:
     """기관 기본정보 조회(getEgytBassInfoInqire) 응답 -> get_er_detail용 dict.
 
     결과가 없으면 빈 dict를 돌려준다.

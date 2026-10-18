@@ -125,7 +125,7 @@ def test_dotenv_respects_existing_environment(live, tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "load_dotenv", load_dotenv)
     path = tmp_path / ".env"
-    path.write_text("OPENAI_API_KEY=file-value\nKAKAO_REST_API_KEY=file-kakao\n")
+    path.write_text("OPENAI_API_KEY=file-value\nKAKAO_REST_API_KEY=file-kakao\n", encoding="utf-8")
     monkeypatch.delenv("KAKAO_REST_API_KEY")
     live.load_environment(path)
     import os
