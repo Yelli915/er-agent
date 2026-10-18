@@ -11,6 +11,7 @@ MEDICAL_SENTENCE = re.compile(
     re.I,
 )
 
+
 # LLM 생성 텍스트 정화 함수
 def sanitize_prose(text: str) -> str:
     """
@@ -22,6 +23,7 @@ def sanitize_prose(text: str) -> str:
     if len(safe) != len([s for s in sentences if s]):
         safe.append("진단은 의료진에게 문의하세요.")
     return " ".join(safe)
+
 
 # 외부 제공 데이터(병원 정보 등) 안전 검증 함수
 def safe_data(value: object, default: str = "확인 불가") -> str:

@@ -1,8 +1,10 @@
+from time import perf_counter
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from er_finder.agent.prompts import CLASSIFIER_PROMPT
+from er_finder.agent.usage import ClassifierUsage, RunUsage
 from er_finder.models import Condition, TriageAssessment
 from er_finder.safety import assess_input, mask_pii
 
@@ -27,11 +29,13 @@ class InputClassifier:
 
     def __init__(self, model=None):
         self.model = model
+        self.last_usage = ClassifierUsage()
 
     def assess(self, text):
         """
         사용자 입력 문장을 분석하여 중증도 분류 및 보안 차단 여부를 최종 판정
         """
+        self.last_usage = ClassifierUsage()
         masked = mask_pii(text)
         result = assess_input(masked)
         if (
@@ -41,9 +45,11 @@ class InputClassifier:
             or (result.triage.severity == "critical" and not result.suspicious)
         ):
             return result
+        usage, started = RunUsage(), perf_counter()
         try:
             output = self.model.with_structured_output(ClassifierOutput).invoke(
-                [("system", CLASSIFIER_PROMPT), ("human", masked)]
+                [("system", CLASSIFIER_PROMPT), ("human", masked)],
+                config={"callbacks": [usage]},
             )
             assessment = TriageAssessment.model_validate(output.model_dump())
             ranks = {"standard": 0, "urgent": 1, "critical": 2}
@@ -63,4 +69,11 @@ class InputClassifier:
             if result.suspicious:
                 result.blocked = True
                 result.reason = "입력 안전성을 확인하지 못했습니다. 위치와 증상만 다시 알려주세요."
+        finally:
+            self.last_usage = ClassifierUsage(
+                calls=1,
+                elapsed_seconds=max(0.0, perf_counter() - started),
+                tokens_complete=usage.known_responses == usage.responses > 0,
+                **(usage.tokens if usage.known_responses else {}),
+            )
         return result

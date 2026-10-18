@@ -81,6 +81,7 @@ class SearchSession(ERFinderState):
         self.severe_region_cache = {}
         self.beds_ready = Event()
         self.allow_severe_batch = False
+        self.planned_calls = None
 
     @property
     def location(self):
@@ -137,6 +138,7 @@ class SearchSession(ERFinderState):
         self.severe_region_cache = {}
         self.beds_ready = Event()
         self.allow_severe_batch = False
+        self.planned_calls = None
 
     def regions(self):
         return [

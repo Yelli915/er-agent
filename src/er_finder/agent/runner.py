@@ -12,7 +12,6 @@ from langchain.agents.middleware import (
     ToolRetryMiddleware,
 )
 from langchain.agents.structured_output import ToolStrategy
-from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import merge_configs
 from langgraph.checkpoint.memory import InMemorySaver
@@ -23,12 +22,14 @@ from langgraph.types import Command
 from er_finder.agent.adapters import ERGraphState, VisitSelection, selected_index
 from er_finder.agent.prompts import SYSTEM_PROMPT
 from er_finder.agent.tools import TOOLS
+from er_finder.agent.usage import ClassifierUsage, RunUsage
 from er_finder.cli.renderer import render_reply
 from er_finder.guardrails.middleware import (
     EmergencyInputGuard,
     EvidenceCheckMiddleware,
     ModelCounter,
     ProfileDynamicPrompt,
+    ServerPlannedCalls,
     ToolSafetyMiddleware,
 )
 from er_finder.guardrails.pii import PII_PATTERN
@@ -43,7 +44,7 @@ from er_finder.search.service import SearchSession
 
 @dataclass
 class RunDiagnostics:
-    """Numeric agent-graph metrics; classifier usage is outside this scope."""
+    """Numeric metrics. Token fields cover the agent graph; classifier_* the classifier."""
 
     model_calls: int
     session_model_calls: int
@@ -54,6 +55,11 @@ class RunDiagnostics:
     tokens_complete: bool
     succeeded: bool
     token_scope: str = "agent_graph"
+    classifier_calls: int = 0
+    classifier_elapsed_seconds: float = 0.0
+    classifier_input_tokens: int | None = None
+    classifier_output_tokens: int | None = None
+    classifier_tokens_complete: bool = True
     error_type: str | None = None
     status_code: int | None = None
     error_code: str | None = None
@@ -94,29 +100,6 @@ def _error_metadata(error: Exception) -> dict:
     }
 
 
-class _RunUsage(BaseCallbackHandler):
-    """Retain token counts only, never model inputs, outputs, or exceptions."""
-
-    def __init__(self):
-        self.responses = 0
-        self.known_responses = 0
-        self.tokens = dict(input_tokens=0, output_tokens=0, total_tokens=0)
-
-    def on_llm_end(self, response, **kwargs):
-        self.responses += 1
-        if not response.generations or not response.generations[0]:
-            return
-        message = getattr(response.generations[0][0], "message", None)
-        usage = getattr(message, "usage_metadata", None)
-        if not usage or not all(
-            type(usage.get(key)) is int and usage[key] >= 0 for key in self.tokens
-        ):
-            return
-        self.known_responses += 1
-        for key in self.tokens:
-            self.tokens[key] += usage[key]
-
-
 @dataclass
 class ChatResult:
     reply: ERSearchReply
@@ -137,6 +120,7 @@ class ERFinder:
         store=None,
         checkpointer=None,
         on_emergency=None,
+        server_planned_calls=True,
     ):
         self.context = ERFinderContext(user_id, transport)
         self.session = SearchSession(provider, transport)
@@ -171,6 +155,8 @@ class ERFinder:
                 ProfileDynamicPrompt(self.session, self.profiles, self.visit),
                 PIIMiddleware("korean_personal_data", strategy="redact", detector=PII_PATTERN),
                 ModelCallLimitMiddleware(run_limit=10, exit_behavior="end"),
+                # Outside the counter so skipped turns are not reported as model calls.
+                *([ServerPlannedCalls(self.session, self.visit)] if server_planned_calls else []),
                 self.counter,
                 ToolRetryMiddleware(max_retries=2, initial_delay=1.0),
                 HumanInTheLoopMiddleware(
@@ -190,6 +176,7 @@ class ERFinder:
         self.last_diagnostics = None
         self.last_error_type = None
         self._session_model_calls = 0
+        self._classifier_usage = ClassifierUsage()
 
     def chat(self, text: str, *, force_refresh: bool = False) -> ChatResult:
         text = mask_pii(text).strip()
@@ -200,11 +187,14 @@ class ERFinder:
         if alerted and self.on_emergency:
             self.on_emergency(EMERGENCY)
         selected = selected_index(text)
-        assessment = (
-            rules
-            if selected is not None and self.last_reply and not rules.blocked
-            else self.classifier.assess(text)
-        )
+        if selected is not None and self.last_reply and not rules.blocked:
+            assessment = rules
+            self._classifier_usage = ClassifierUsage()  # no classifier call this turn
+        else:
+            assessment = self.classifier.assess(text)
+            self._classifier_usage = (
+                getattr(self.classifier, "last_usage", None) or ClassifierUsage()
+            )
         if not alerted and assessment.triage.severity == "critical" and self.on_emergency:
             self.on_emergency(EMERGENCY)
         self.counter.calls = 0
@@ -243,6 +233,7 @@ class ERFinder:
             raise ValueError("승인 대기 중인 방문 계획이 없습니다.")
         self.visit.authorize(approved)
         self.pending = False
+        self._classifier_usage = ClassifierUsage()
         self.counter.calls = 0
         decision = (
             {"type": "approve"}
@@ -256,7 +247,7 @@ class ERFinder:
 
     def _run_graph(self, inputs, history_note=None) -> ChatResult:
         started = perf_counter()
-        usage = _RunUsage()
+        usage = RunUsage()
         succeeded = False
         error_metadata = {}
         self.last_error_type = None
@@ -302,6 +293,11 @@ class ERFinder:
             },
             tokens_complete=usage.known_responses == usage.responses == self.counter.calls,
             succeeded=succeeded,
+            classifier_calls=self._classifier_usage.calls,
+            classifier_elapsed_seconds=self._classifier_usage.elapsed_seconds,
+            classifier_input_tokens=self._classifier_usage.input_tokens,
+            classifier_output_tokens=self._classifier_usage.output_tokens,
+            classifier_tokens_complete=self._classifier_usage.tokens_complete,
             **error_metadata,
         )
         self.last_reply = reply

@@ -329,8 +329,10 @@ def test_default_factory_constructs_configured_models_classifier_and_actual_runn
         arguments.append(kwargs)
         return OfflineRunner(**{key: kwargs[key] for key in ("user_id", "transport", "store")})
 
+    factory = importlib.import_module("er_finder.agent.factory")
     modules = {
         "er_finder.agent.runner": SimpleNamespace(ERFinder=runner),
+        "er_finder.agent.factory": factory,
         "er_finder.guardrails.triage": SimpleNamespace(InputClassifier=lambda model: model),
         "langchain_openai": SimpleNamespace(ChatOpenAI=Model),
         "er_finder.web.provider": SimpleNamespace(LiveProvider=Provider),
@@ -375,8 +377,10 @@ def test_default_factory_closes_resources_when_runner_construction_fails(live, m
     def broken_runner(**kwargs):
         raise AttributeError("offline-test-value")
 
+    factory = importlib.import_module("er_finder.agent.factory")
     modules = {
         "er_finder.agent.runner": SimpleNamespace(ERFinder=broken_runner),
+        "er_finder.agent.factory": factory,
         "er_finder.guardrails.triage": SimpleNamespace(InputClassifier=lambda model: model),
         "langchain_openai": SimpleNamespace(ChatOpenAI=model),
         "er_finder.web.provider": SimpleNamespace(LiveProvider=Provider),

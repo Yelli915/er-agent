@@ -75,7 +75,7 @@ REGIONS: dict[str, Region] = {
     ),
 }
 
-# 중증질환 구분 코드: docs/api-contract.md §1.5 표가 아직 비어 있어 미확정.
+# 중증질환 구분 코드: docs/design.md §B.1.5 표가 아직 비어 있어 미확정.
 # 실제 응답을 받은 뒤 이 값과 표를 함께 채운다.
 DEFAULT_CONDITION = "TODO_CONFIRM_CONDITION_CODE"
 
@@ -171,7 +171,7 @@ def run(
     if "severe" in ops and condition == DEFAULT_CONDITION:
         print(
             "[warn] --condition 미지정: 중증질환 구분 코드가 아직 미확정입니다 "
-            "(docs/api-contract.md §1.5). 임시값으로 호출합니다.",
+            "(docs/design.md §B.1.5). 임시값으로 호출합니다.",
             file=sys.stderr,
         )
 
@@ -203,7 +203,7 @@ def run(
 
             if "severe" in ops:
                 # SM_TYPE은 옵션이라 생략하면 지역 내 병원 전체가 mkioskty1~28을 다 붙여서
-                # 온다(docs/api-contract.md §1.5) — 그래서 condition을 넘겨도 필터링용
+                # 온다(docs/design.md §B.1.5) — 그래서 condition을 넘겨도 필터링용
                 # SM_TYPE으로는 안 쓰고, 전체를 받아 fixture로 남긴다.
                 params = build_params(
                     {"STAGE1": region.sido, "STAGE2": region.sigungu}, service_key
@@ -254,7 +254,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--condition",
         default=DEFAULT_CONDITION,
-        help="중증질환 수용가능 조회 파라미터 값 (docs/api-contract.md §1.5 확정 전 임시)",
+        help="중증질환 수용가능 조회 파라미터 값 (docs/design.md §B.1.5 확정 전 임시)",
     )
     parser.add_argument(
         "--out-dir",

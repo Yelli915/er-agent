@@ -8,6 +8,7 @@ from langchain.agents.middleware import (
     dynamic_prompt,
     hook_config,
 )
+from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
 
 from er_finder.agent.prompts import SYSTEM_PROMPT
@@ -96,6 +97,10 @@ def EvidenceCheckMiddleware(session):
 # 아니라 "실행 Middleware"(도구 호출 순서 강제·병렬화, 호출 횟수 집계) 영역
 
 
+def _as_tool_calls(calls):
+    return [{**c, "id": str(uuid4()), "type": "tool_call"} for c in calls]
+
+
 class ToolSafetyMiddleware(AgentMiddleware):
     def __init__(self, visit, session):
         self.visit, self.session = visit, session
@@ -111,6 +116,7 @@ class ToolSafetyMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state, runtime):
+        self.session.planned_calls = None  # tools may have run since it was planned
         if self.session.lookup_error:
             return self._lookup_failure_reply()
         return None
@@ -126,7 +132,12 @@ class ToolSafetyMiddleware(AgentMiddleware):
             self.visit.validate(self.visit.pending)
             next_calls = [{"name": "save_visit_plan", "args": dict(self.visit.pending)}]
         else:
-            next_calls = self.session.next_calls() if not self.visit.pending else []
+            # ServerPlannedCalls already planned this turn; reuse it instead of re-selecting.
+            planned, self.session.planned_calls = self.session.planned_calls, None
+            if self.visit.pending:
+                next_calls = []
+            else:
+                next_calls = planned if planned is not None else self.session.next_calls()
         if next_calls:
             # Server-owned calls enforce both order and arguments, including one selected
             # save request. Drop acknowledgements of replaced structured-output calls.
@@ -136,7 +147,7 @@ class ToolSafetyMiddleware(AgentMiddleware):
                 for m in state["messages"]
                 if isinstance(m, ToolMessage) and m.tool_call_id in old_ids and m.id
             ]
-            calls = [{**c, "id": str(uuid4()), "type": "tool_call"} for c in next_calls]
+            calls = _as_tool_calls(next_calls)
             self.session.allow_severe_batch = any(
                 c["name"] == "get_er_bed_status" for c in calls
             ) and any(c["name"] == "get_severe_acceptance" for c in calls)
@@ -205,3 +216,26 @@ class ModelCounter(AgentMiddleware):
     def wrap_model_call(self, request, handler):
         self.calls += 1
         return handler(request)
+
+
+class ServerPlannedCalls(AgentMiddleware):
+    """Skip the model while the server already knows the next search calls.
+
+    ToolSafetyMiddleware.after_model replaces whatever tool calls the model proposes with
+    session.next_calls(), so those turns add latency without influencing the result. The
+    model is only invoked once no server-owned call remains (final ERSearchReply) or when a
+    visit plan is pending. Short-circuited turns still count toward ModelCallLimit.
+    """
+
+    def __init__(self, session, visit):
+        self.session, self.visit = session, visit
+
+    def wrap_model_call(self, request, handler):
+        if self.session.lookup_error or self.visit.pending:
+            return handler(request)
+        calls = self.session.next_calls()
+        if not calls:
+            return handler(request)
+        self.session.planned_calls = calls  # consumed by ToolSafetyMiddleware.after_model
+        message = AIMessage(content="", tool_calls=_as_tool_calls(calls))
+        return ModelResponse(result=[message])

@@ -31,6 +31,5 @@ class ERFinderContext:
             raise ValueError("user_id는 빈 값일 수 없습니다 (Store/세션 키로 사용됨)")
         if self.transport not in _VALID_TRANSPORT_MODES:
             raise ValueError(
-                f"transport는 {_VALID_TRANSPORT_MODES} 중 하나여야 합니다: "
-                f"{self.transport!r}"
+                f"transport는 {_VALID_TRANSPORT_MODES} 중 하나여야 합니다: {self.transport!r}"
             )

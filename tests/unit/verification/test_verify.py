@@ -186,6 +186,35 @@ def test_offline_guard_blocks_dns_and_connection_without_contacting_network(veri
     assert socket.getaddrinfo is original
 
 
+def test_offline_guard_allows_only_in_process_loopback_pairs(verify):
+    cleanups = []
+
+    class Config:
+        add_cleanup = cleanups.append
+
+    verify.pytest_configure(Config())
+    try:
+        a, b = socket.socketpair()  # Windows builds this from a loopback listener
+        a.close()
+        b.close()
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            with socket.socket() as client:
+                client.connect(("127.0.0.1", port))
+            with socket.socket() as client:
+                with pytest.raises(RuntimeError, match="network"):
+                    client.connect(("127.0.0.1", port + 1 if port < 65535 else port - 1))
+                with pytest.raises(RuntimeError, match="network"):
+                    client.connect(("203.0.113.1", port))
+        with pytest.raises(RuntimeError, match="network"):
+            socket.socket().connect(("127.0.0.1", port))  # listener closed: no longer trusted
+    finally:
+        for cleanup in reversed(cleanups):
+            cleanup()
+
+
 def test_offline_guard_blocks_legacy_dns_and_udp_without_contacting_network(verify):
     cleanups = []
 
@@ -267,7 +296,7 @@ def test_runner_does_not_pass_a_real_suite_when_every_test_is_skipped(verify, tm
     assert code != 0
 
 
-def test_benchmark_refuses_to_publish_unmeasured_latency():
+def test_benchmark_refuses_to_call_live_apis_without_opt_in():
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "benchmark.py")],
         cwd=ROOT,

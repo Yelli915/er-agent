@@ -135,6 +135,25 @@ def test_exact_candidate_selection_skips_classifier_but_other_input_still_uses_i
     assert not blocked.pending_approval and not blocked.reply.hospitals
 
 
+def test_selection_turn_does_not_repeat_previous_classifier_usage(make_finder):
+    from er_finder.agent.usage import ClassifierUsage
+    from er_finder.safety import assess_input
+
+    class MeteredClassifier:
+        last_usage = ClassifierUsage()
+
+        def assess(self, text):
+            self.last_usage = ClassifierUsage(calls=1, input_tokens=10, output_tokens=5)
+            return assess_input(text)
+
+    finder = make_finder(classifier=MeteredClassifier())
+    first = finder.chat("강남구 역삼동 발목이 아파요")
+    selected = finder.chat("1번")
+    assert first.diagnostics.classifier_calls == 1
+    assert selected.diagnostics.classifier_calls == 0
+    assert not selected.diagnostics.classifier_input_tokens
+
+
 def test_rejection_resumes_graph_without_writing(make_finder):
     finder = make_finder()
     finder.chat("강남구 역삼동 발목이 아파요")
@@ -251,3 +270,28 @@ def test_run_diagnostics_count_only_new_response_tokens_and_contain_no_patient_t
     assert "강남" not in repr(second.diagnostics)
     finder.end_session()
     assert finder.last_diagnostics is None
+
+
+def test_server_planned_search_steps_do_not_call_the_model(make_finder):
+    model = OfflineModel()
+    finder = make_finder(model=model)
+    result = finder.chat("강남구 역삼동 발목이 아파요")
+    assert result.reply.hospitals
+    # geocode, list, beds and details are server-determined; only the final reply needs the model.
+    assert result.diagnostics.model_calls == 1
+    assert len(model._requests) == 1 and not model._requests[0]["next_calls"]
+    assert result.diagnostics.tokens_complete
+
+
+def test_urgent_search_with_condition_uses_one_model_call(make_finder):
+    finder = make_finder()
+    result = finder.chat("강남구 역삼동 가슴이 답답하고 식은땀이 나요")
+    assert result.reply.hospitals and result.diagnostics.model_calls == 1
+
+
+def test_disabling_server_planned_calls_restores_a_model_call_per_step(make_finder):
+    finder = make_finder(server_planned_calls=False)
+    result = finder.chat("강남구 역삼동 발목이 아파요")
+    assert result.reply.hospitals
+    # geocode, list, beds, details and the final reply each need a model turn again.
+    assert result.diagnostics.model_calls == 5

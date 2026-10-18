@@ -61,35 +61,17 @@ def credential_status() -> dict[str, bool]:
     return {name: bool(os.environ.get(name, "").strip()) for name in REQUIRED_KEYS}
 
 
-def _default_runner_factory(**kwargs: Any) -> Any:
+def default_runner_factory(**kwargs: Any) -> Any:
     """Construct the real model, classifier and runner only after explicit connection."""
     runner_module = importlib.import_module("er_finder.agent.runner")
-    classifier_module = importlib.import_module("er_finder.guardrails.triage")
-    model_module = importlib.import_module("langchain_openai")
+    factory_module = importlib.import_module("er_finder.agent.factory")
     provider_module = importlib.import_module("er_finder.web.provider")
     settings = Settings()
-    timeout = settings.model_timeout
-    http_client = httpx.Client(timeout=timeout)
+    http_client = httpx.Client(timeout=settings.model_timeout)
     provider = None
     try:
         provider = provider_module.LiveProvider(kakao_key=os.environ.get("KAKAO_REST_API_KEY", ""))
-        model = model_module.ChatOpenAI(
-            model=settings.main_model,
-            reasoning_effort=settings.main_reasoning_effort,
-            max_tokens=settings.main_max_output_tokens,
-            http_client=http_client,
-            timeout=timeout,
-            max_retries=0,
-        )
-        classifier_model = model_module.ChatOpenAI(
-            model=settings.classifier_model,
-            temperature=settings.classifier_temperature,
-            max_tokens=settings.classifier_max_tokens,
-            http_client=http_client,
-            timeout=timeout,
-            max_retries=0,
-        )
-        classifier = classifier_module.InputClassifier(classifier_model)
+        model, classifier = factory_module.build_models(settings, http_client)
         runner = runner_module.ERFinder(
             provider=provider, model=model, classifier=classifier, **kwargs
         )
@@ -148,7 +130,7 @@ class RunnerBackend:
         self.user_id = user_id or str(uuid4())
         self._store = store if store is not None else InMemoryStore()
         self.profile = ERFinderStore(self._store, self.user_id)
-        self._factory = runner_factory or _default_runner_factory
+        self._factory = runner_factory or default_runner_factory
         self._runner: Any = None
         self._transport = "car"
         self._category = "not_connected"

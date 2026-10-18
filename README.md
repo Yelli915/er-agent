@@ -52,6 +52,18 @@ uv run --frozen python scripts/verify.py --require-integration
 
 검증 도구는 live 테스트를 제외하고 Python 소켓의 외부 통신을 차단합니다. 오프라인 검증은 실제 메모리·검색·LangGraph를 실행하며 모델과 HTTP 응답만 테스트 자료로 대체합니다. 별도의 화면 계약 테스트에는 주입한 runner를 사용합니다. 실제 키로 실행한 결과는 별도 로컬 보고서로 구분합니다. 수집 오류가 남으면 실행 가능한 테스트를 계속 기록하되 전체 결과는 FAIL입니다.
 
+실제 API 실측과 품질 측정은 별도 명령이며 비용이 발생하므로 명시적으로만 실행합니다.
+
+```bash
+python scripts/benchmark.py --live --runs 20 --prices 0.25,2,0.15,0.6 --output docs/benchmarks/baseline.json
+python scripts/benchmark.py --check docs/benchmarks/after.json     # 커밋 전 키·필수 항목 점검
+python scripts/benchmark.py --compare docs/benchmarks/baseline.json docs/benchmarks/after.json
+python scripts/eval_golden.py [--live]      # 위급도 골든셋(tests/fixtures/golden/triage.json)
+ER_RUN_LIVE=1 pytest tests/live -m live     # 실제 E-Gen·OpenAI 계약 점검(매일 CI에서도 실행)
+```
+
+`--prices`는 예시 값이 아니라 사용 중인 모델의 실제 단가(USD/1M 토큰)로 바꿔야 합니다. Windows에서는 `PYTHONUTF8=1`을 설정하세요.
+
 `verification-results/report.json`, `junit.xml`, `pytest.log`에 실행 근거를 저장합니다. 전체 연결을 검증하지 못하면 `integration.status`는 BLOCKED 또는 NOT_VERIFIED이며, 파일이 존재하거나 단위 테스트가 통과한 것만으로 통합 PASS를 표시하지 않습니다. 추천 정확도는 미측정이며, 지연 시간의 단일 실행 실측은 [검증 기록](docs/verification.md)을 따릅니다.
 
 ## 담당과 문서
@@ -65,10 +77,9 @@ uv run --frozen python scripts/verify.py --require-integration
 | 5 가드레일 | `guardrails/` |
 | 6 화면·검증 | `web/`, `cli/`, `scripts/verify.py`, 화면 테스트 |
 
-- [6번 담당 가이드](docs/6번_Verification_담당가이드.md)
-- [UI 연결 계약](docs/ui-integration.md)
-- [검증 기록](docs/verification.md)
-- [공통 인터페이스](docs/interfaces.md)
-- [e97341a 시점 통합 검토](docs/review-2026-09-11.md): 이전 커밋의 검토 기록이며 현재 오류 목록과 구분합니다.
+| 문서 | 내용 |
+|---|---|
+| [설계·계약](docs/design.md) | A 공통 인터페이스(데이터 모델·도구·Context·미들웨어·오류 처리), B E-Gen·카카오 API 매핑, C 화면↔runner 계약 |
+| [검증](docs/verification.md) | 실행 기록, 검증 계획(성공 기준·시나리오·안전), 벤치마크 절차 |
 
-CI는 `Web and verification tooling`(6번)과 `All modules integration`(전체)을 각각 실행합니다. 6번 통과를 전체 서비스 통과로 해석하지 않습니다. 로컬에서 담당 범위만 실행하려면 `python scripts/verify.py --scope web`을 사용합니다. 기본 실행은 전체 범위입니다.
+CI는 `Web and verification tooling`(6번)과 `All modules integration`(전체)을 각각 실행합니다. 6번 통과를 전체 서비스 통과로 해석하지 않습니다. 로컬에서 담당 범위만 실행하려면 `python scripts/verify.py --scope web`을 사용합니다. 기본 실행은 전체 범위입니다. Windows에서도 `verify.py`가 동작하며(같은 프로세스의 loopback 연결만 허용), 외부 통신은 차단합니다.
