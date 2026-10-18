@@ -1,6 +1,6 @@
 """E-Gen API가 돌려주는 XML을 dict로 바꾸는 모듈.
 
-api-contract.md 1.2~1.6을 따른다. 여기서 만든 dict가 도구 경계를 넘어가는 값이라
+design.md B.1.2~B.1.6을 따른다. 여기서 만든 dict가 도구 경계를 넘어가는 값이라
 XML 관련 코드는 이 파일 밖으로 나가지 않게 한다.
 """
 
@@ -10,6 +10,7 @@ import math
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 KOREA_TZ = ZoneInfo("Asia/Seoul")
@@ -19,7 +20,7 @@ class EgenResponseError(Exception):
     """resultCode가 00이 아니거나 XML을 파싱할 수 없을 때 발생시키는 예외."""
 
 
-# 카카오 시도 표기 -> E-Gen 시도 표기 (api-contract.md §2.1)
+# 카카오 시도 표기 -> E-Gen 시도 표기 (design.md §B.2)
 # 강원(2023년), 전북(2024년)은 "OO특별자치도"로 행정구역명이 바뀌었다. 실제 E-Gen
 # 응답 주소로 확인함(강원): STAGE1="강원도"로 조회하면 0건, "강원특별자치도"로 조회해야 나옴.
 SIDO_ALIASES = {
@@ -86,7 +87,7 @@ def to_float(value: str | None) -> float | None:
 
 
 def to_bed_count(value: str | None) -> int | None:
-    """hvec(가용 병상 수) 규칙: 음수·빈 값은 None (api-contract.md §1.4)."""
+    """hvec(가용 병상 수) 규칙: 음수·빈 값은 None (design.md §B.1.4)."""
     number = to_float(value)
     if number is None or number < 0 or not number.is_integer():
         return None
@@ -141,7 +142,7 @@ def get_items(xml_text: str) -> list[ET.Element]:
     return items_element.findall("item")
 
 
-def parse_nearby(xml_text: str) -> list[dict]:
+def parse_nearby(xml_text: str) -> list[dict[str, Any]]:
     """위치정보 조회(getEgytLcinfoInqire) 응답 -> list_nearby_ers용 dict 목록."""
     result = []
     for item in get_items(xml_text):
@@ -152,7 +153,7 @@ def parse_nearby(xml_text: str) -> list[dict]:
                 "hpid": find_text(item, "hpid"),
                 "name": find_text(item, "dutyName"),
                 # dutyTel3(응급실 직통 가정)는 실제로 거의 결측이라 대표전화(dutyTel1)를 쓴다
-                # (api-contract.md §1.3, 팀 합의).
+                # (design.md §B.1.3, 팀 합의).
                 "er_tel": find_text(item, "dutyTel1"),
                 "lat": to_float(find_text(item, "latitude")),
                 "lon": to_float(find_text(item, "longitude")),
@@ -165,7 +166,7 @@ def parse_nearby(xml_text: str) -> list[dict]:
     return result
 
 
-def parse_bed_status(xml_text: str) -> list[dict]:
+def parse_bed_status(xml_text: str) -> list[dict[str, Any]]:
     """실시간 가용병상 조회(getEmrrmRltmUsefulSckbdInfoInqire) 응답 -> dict 목록."""
     result = []
     for item in get_items(xml_text):
@@ -180,11 +181,11 @@ def parse_bed_status(xml_text: str) -> list[dict]:
     return result
 
 
-def parse_severe(xml_text: str) -> list[dict]:
+def parse_severe(xml_text: str) -> list[dict[str, Any]]:
     """중증질환자 수용가능정보 조회(getSrsillDissAceptncPosblInfoInqire) 응답 -> dict 목록.
 
     mkioskty1~28을 전부 True/False/None으로 바꿔서 "mkioskty" 안에 번호별로 담는다.
-    어떤 번호가 어떤 질환에 해당하는지는 client.py가 결정한다 (api-contract.md §1.5).
+    어떤 번호가 어떤 질환에 해당하는지는 client.py가 결정한다 (design.md §B.1.5).
     """
     result = []
     for item in get_items(xml_text):
@@ -204,7 +205,7 @@ def parse_severe(xml_text: str) -> list[dict]:
     return result
 
 
-def parse_er_detail(xml_text: str) -> dict:
+def parse_er_detail(xml_text: str) -> dict[str, Any]:
     """기관 기본정보 조회(getEgytBassInfoInqire) 응답 -> get_er_detail용 dict.
 
     결과가 없으면 빈 dict를 돌려준다.
@@ -223,7 +224,7 @@ def parse_er_detail(xml_text: str) -> dict:
             hours_parts.append(f"{day_name} {start}~{end}")
 
     # dutyTel3(응급실 직통 가정)는 실제로 거의 결측이라 대표전화(dutyTel1)를 쓴다
-    # (api-contract.md §1.6, 팀 합의). er_tel/main_tel이 당분간 같은 값이 된다.
+    # (design.md §B.1.6, 팀 합의). er_tel/main_tel이 당분간 같은 값이 된다.
     main_tel = find_text(item, "dutyTel1")
     return {
         "hpid": find_text(item, "hpid"),

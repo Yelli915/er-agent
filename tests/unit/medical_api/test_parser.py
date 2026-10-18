@@ -31,7 +31,7 @@ def test_parse_nearby_real_response(egen_fixture):
     first = rows[0]
     assert first["hpid"]
     assert first["name"]
-    assert first["er_tel"]  # dutyTel1로 채워짐 (api-contract.md §1.3)
+    assert first["er_tel"]  # dutyTel1로 채워짐 (design.md §B.1.3)
     assert isinstance(first["lat"], float)
     assert isinstance(first["lon"], float)
     assert isinstance(first["distance_km"], float)

@@ -23,7 +23,7 @@ def passthrough_or_unknown(value):
 @pytest.fixture(autouse=True)
 def passthrough_safe_data(monkeypatch):
     # select_candidates only orchestrates safety scrubbing; the scrubbing
-    # rules themselves belong to er_finder.safety and are tested there.
+    # rules themselves belong to er_finder.guardrails and are tested there.
     monkeypatch.setattr("er_finder.search.candidates.safe_data", passthrough_or_unknown)
 
 

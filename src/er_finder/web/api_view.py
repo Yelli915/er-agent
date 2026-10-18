@@ -1,6 +1,7 @@
 """Explicit E-Gen location lookup, separate from agent recommendations."""
 
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import streamlit as st
@@ -55,7 +56,7 @@ def render_api_view() -> None:
         )
 
     if submitted and configured:
-        result = {
+        result: Any = {
             "lat": lat,
             "lon": lon,
             "radius": radius,
@@ -111,7 +112,7 @@ def render_api_view() -> None:
         _render_detail(result, configured=configured)
 
 
-def _render_detail(result: dict, *, configured: bool) -> None:
+def _render_detail(result: dict[str, Any], *, configured: bool) -> None:
     hospitals = {
         row["기관 ID"]: row["기관명"] for row in result["rows"] if row["기관 ID"] != "확인 불가"
     }
@@ -128,7 +129,7 @@ def _render_detail(result: dict, *, configured: bool) -> None:
     )
     if st.button("상세 조회", key="api_detail_search", disabled=not configured):
         if configured and selected in hospitals:
-            detail = {"hpid": selected, "data": {}, "error": False}
+            detail: Any = {"hpid": selected, "data": {}, "error": False}
             try:
                 with st.spinner("기관 상세 정보를 조회하고 있습니다…"):
                     from er_finder.medical_api.client import get_er_detail

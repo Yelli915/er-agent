@@ -38,8 +38,8 @@ class LiveProvider:
                 )
             )
         )
-        self._bed_cache: dict = {}
-        self._detail_cache: dict = {}
+        self._bed_cache: dict[str, Any] = {}
+        self._detail_cache: dict[str, Any] = {}
         self._lock = RLock()
         self._closed = False
 
@@ -47,19 +47,21 @@ class LiveProvider:
         if self._closed:
             raise RuntimeError("연결이 종료되었습니다. 다시 연결해 주세요.")
 
-    def geocode(self, query: str) -> dict:
+    def geocode(self, query: str) -> dict[str, Any]:
         self._ensure_open()
         coordinates = parse_coordinates(query)
         if coordinates is not None:
             return dict(found=True, lat=coordinates[0], lon=coordinates[1])
-        return self._geocoder.geocode(query)
+        found: dict[str, Any] = self._geocoder.geocode(query)
+        return found
 
-    def list_nearby_ers(self, lat: float, lon: float, radius_km: int = 5) -> list[dict]:
+    def list_nearby_ers(self, lat: float, lon: float, radius_km: int = 5) -> list[dict[str, Any]]:
         self._ensure_open()
         with self._lock:
-            return self._medical.list_nearby_ers(
+            nearby: list[dict[str, Any]] = self._medical.list_nearby_ers(
                 lat, lon, radius_km, detail_cache=self._detail_cache, raise_on_error=True
             )
+            return nearby
 
     def get_er_bed_status(
         self,
@@ -68,7 +70,7 @@ class LiveProvider:
         hpids: list[str],
         *,
         force_refresh: bool = False,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         self._ensure_open()
         with self._lock:
             key = make_key(normalize_sido(sido), sigungu)
@@ -95,16 +97,22 @@ class LiveProvider:
                 for row in rows
             ]
 
-    def get_severe_acceptance(self, sido: str, sigungu: str, condition: str) -> list[dict]:
+    def get_severe_acceptance(
+        self, sido: str, sigungu: str, condition: str
+    ) -> list[dict[str, Any]]:
         self._ensure_open()
-        return self._medical.get_severe_acceptance(sido, sigungu, condition, raise_on_error=True)
+        severe: list[dict[str, Any]] = self._medical.get_severe_acceptance(
+            sido, sigungu, condition, raise_on_error=True
+        )
+        return severe
 
-    def get_er_detail(self, hpid: str) -> dict:
+    def get_er_detail(self, hpid: str) -> dict[str, Any]:
         self._ensure_open()
         with self._lock:
-            return self._medical.get_er_detail(
+            detail: dict[str, Any] = self._medical.get_er_detail(
                 hpid, detail_cache=self._detail_cache, raise_on_error=True
             )
+            return detail
 
     def clear_cache(self) -> None:
         with self._lock:

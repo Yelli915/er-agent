@@ -11,17 +11,24 @@ MEDICAL_SENTENCE = re.compile(
     re.I,
 )
 
+DIAGNOSIS_NOTICE = "진단은 의료진에게 문의하세요."
+
+
 # LLM 생성 텍스트 정화 함수
-def sanitize_prose(text: str) -> str:
+def sanitize_prose(text: str, limit: int | None = None) -> str:
     """
     LLM이 생성한 응답 문장에서 확정적 진단이나 처방 성격의 문장을 제거하고,
     제거된 문장이 있을 경우 안내 면책 문구를 추가
+    limit이 있으면 면책 문구를 덧붙인 결과가 limit자를 넘지 않도록 뒤쪽 문장부터 줄인다.
     """
     sentences = re.split(r"(?<=[.!?。])\s*|\n", text)
     safe = [s for s in sentences if s and not MEDICAL_SENTENCE.search(s)]
     if len(safe) != len([s for s in sentences if s]):
-        safe.append("진단은 의료진에게 문의하세요.")
+        while limit is not None and safe and len(" ".join([*safe, DIAGNOSIS_NOTICE])) > limit:
+            safe.pop()
+        safe.append(DIAGNOSIS_NOTICE)
     return " ".join(safe)
+
 
 # 외부 제공 데이터(병원 정보 등) 안전 검증 함수
 def safe_data(value: object, default: str = "확인 불가") -> str:

@@ -1,4 +1,5 @@
 import json
+from typing import Any
 from uuid import uuid4
 
 from langchain.agents.middleware import (
@@ -8,13 +9,17 @@ from langchain.agents.middleware import (
     dynamic_prompt,
     hook_config,
 )
+from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
 
-from er_finder.agent.prompts import SYSTEM_PROMPT
 from er_finder.guardrails.evidence import sanitize_prose
+from er_finder.models import ERSearchReply
+from er_finder.prompts import SYSTEM_PROMPT
+
+NEXT_ACTION_MAX_LENGTH = 80
 
 
-def EmergencyInputGuard(session):
+def EmergencyInputGuard(session: Any) -> Any:
     """Input 가드레일 (before_agent).
 
     위급 상황 고정 안내·프롬프트 인젝션 탐지·범위 밖 요청 필터는 InputClassifier
@@ -24,7 +29,7 @@ def EmergencyInputGuard(session):
     """
 
     @before_agent(can_jump_to=["end"], name="EmergencyInputGuard")
-    def emergency_input_guard(state, runtime):
+    def emergency_input_guard(state: Any, runtime: Any) -> dict[str, Any]:
         if session.assessment.blocked:
             return {
                 "jump_to": "end",
@@ -33,12 +38,13 @@ def EmergencyInputGuard(session):
                     AIMessage(content=session.assessment.reason or "검색하지 않았습니다.")
                 ],
             }
-        return session.snapshot()
+        snapshot: dict[str, Any] = session.snapshot()
+        return snapshot
 
     return emergency_input_guard
 
 
-def ProfileDynamicPrompt(session, profiles, visit):
+def ProfileDynamicPrompt(session: Any, profiles: Any, visit: Any) -> Any:
     """프로필 주입 (before_model 단계에서 매 모델 호출 직전에 시스템 프롬프트를
     새로 생성). Store의 기본 주소·최근 방문 병원과 Runtime의 이동수단을 system
     prompt에 JSON으로 덧붙인다. 이 JSON은 신뢰된 실행 상태와 비신뢰 데이터(사용자·
@@ -47,7 +53,7 @@ def ProfileDynamicPrompt(session, profiles, visit):
     """
 
     @dynamic_prompt
-    def profile_dynamic_prompt(request):
+    def profile_dynamic_prompt(request: Any) -> str:
         data = session.status()
         data.update(
             transport=request.runtime.context.transport,
@@ -66,7 +72,7 @@ def ProfileDynamicPrompt(session, profiles, visit):
     return profile_dynamic_prompt
 
 
-def EvidenceCheckMiddleware(session):
+def EvidenceCheckMiddleware(session: Any) -> Any:
     """Output 가드레일 (after_agent).
 
     - 근거 없는 수치 차단: 형식이 올바른 응답도 session.check_evidence가
@@ -77,13 +83,16 @@ def EvidenceCheckMiddleware(session):
     """
 
     @after_agent(name="EvidenceCheckMiddleware")
-    def evidence_check(state, runtime):
+    def evidence_check(state: Any, runtime: Any) -> dict[str, Any]:
         reply = session.check_evidence(state.get("structured_response"))
         if reply is not None:
-            updates = {"next_action": sanitize_prose(reply.next_action)}
+            updates: dict[str, Any] = {
+                "next_action": sanitize_prose(reply.next_action, limit=NEXT_ACTION_MAX_LENGTH)
+            }
             if reply.no_candidate_reason:
                 updates["no_candidate_reason"] = sanitize_prose(reply.no_candidate_reason)
-            reply = reply.model_copy(update=updates)
+            # model_copy skips validation; re-validate so the edited prose keeps the contract.
+            reply = ERSearchReply.model_validate({**reply.model_dump(), **updates})
         return {
             "structured_response": reply,
             **session.snapshot(),
@@ -96,11 +105,15 @@ def EvidenceCheckMiddleware(session):
 # 아니라 "실행 Middleware"(도구 호출 순서 강제·병렬화, 호출 횟수 집계) 영역
 
 
+def _as_tool_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{**c, "id": str(uuid4()), "type": "tool_call"} for c in calls]
+
+
 class ToolSafetyMiddleware(AgentMiddleware):
-    def __init__(self, visit, session):
+    def __init__(self, visit: Any, session: Any) -> None:
         self.visit, self.session = visit, session
 
-    def _lookup_failure_reply(self):
+    def _lookup_failure_reply(self) -> dict[str, Any]:
         reply = self.session.check_evidence(None)
         return {
             "jump_to": "end",
@@ -110,13 +123,14 @@ class ToolSafetyMiddleware(AgentMiddleware):
         }
 
     @hook_config(can_jump_to=["end"])
-    def before_model(self, state, runtime):
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        self.session.planned_calls = None  # tools may have run since it was planned
         if self.session.lookup_error:
             return self._lookup_failure_reply()
         return None
 
     @hook_config(can_jump_to=["end"])
-    def after_model(self, state, runtime):
+    def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         if self.session.lookup_error:
             return self._lookup_failure_reply()
         last = next((m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None)
@@ -126,7 +140,12 @@ class ToolSafetyMiddleware(AgentMiddleware):
             self.visit.validate(self.visit.pending)
             next_calls = [{"name": "save_visit_plan", "args": dict(self.visit.pending)}]
         else:
-            next_calls = self.session.next_calls() if not self.visit.pending else []
+            # ServerPlannedCalls already planned this turn; reuse it instead of re-selecting.
+            planned, self.session.planned_calls = self.session.planned_calls, None
+            if self.visit.pending:
+                next_calls = []
+            else:
+                next_calls = planned if planned is not None else self.session.next_calls()
         if next_calls:
             # Server-owned calls enforce both order and arguments, including one selected
             # save request. Drop acknowledgements of replaced structured-output calls.
@@ -136,7 +155,7 @@ class ToolSafetyMiddleware(AgentMiddleware):
                 for m in state["messages"]
                 if isinstance(m, ToolMessage) and m.tool_call_id in old_ids and m.id
             ]
-            calls = [{**c, "id": str(uuid4()), "type": "tool_call"} for c in next_calls]
+            calls = _as_tool_calls(next_calls)
             self.session.allow_severe_batch = any(
                 c["name"] == "get_er_bed_status" for c in calls
             ) and any(c["name"] == "get_severe_acceptance" for c in calls)
@@ -172,7 +191,7 @@ class ToolSafetyMiddleware(AgentMiddleware):
             }
         return None
 
-    def wrap_tool_call(self, request, handler):
+    def wrap_tool_call(self, request: Any, handler: Any) -> Any:
         try:
             if self.session.lookup_error:
                 return ToolMessage(
@@ -199,9 +218,32 @@ class ToolSafetyMiddleware(AgentMiddleware):
 
 
 class ModelCounter(AgentMiddleware):
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls = 0
 
-    def wrap_model_call(self, request, handler):
+    def wrap_model_call(self, request: Any, handler: Any) -> Any:
         self.calls += 1
         return handler(request)
+
+
+class ServerPlannedCalls(AgentMiddleware):
+    """Skip the model while the server already knows the next search calls.
+
+    ToolSafetyMiddleware.after_model replaces whatever tool calls the model proposes with
+    session.next_calls(), so those turns add latency without influencing the result. The
+    model is only invoked once no server-owned call remains (final ERSearchReply) or when a
+    visit plan is pending. Short-circuited turns still count toward ModelCallLimit.
+    """
+
+    def __init__(self, session: Any, visit: Any) -> None:
+        self.session, self.visit = session, visit
+
+    def wrap_model_call(self, request: Any, handler: Any) -> Any:
+        if self.session.lookup_error or self.visit.pending:
+            return handler(request)
+        calls = self.session.next_calls()
+        if not calls:
+            return handler(request)
+        self.session.planned_calls = calls  # consumed by ToolSafetyMiddleware.after_model
+        message = AIMessage(content="", tool_calls=_as_tool_calls(calls))
+        return ModelResponse(result=[message])

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 
@@ -35,8 +36,8 @@ def request_with_transport_retries(
     method: str,
     url: str,
     *,
-    params: dict | None = None,
-    headers: dict | None = None,
+    params: dict[str, Any] | None = None,
+    headers: dict[str, Any] | None = None,
     timeout: float = SAFE_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
     backoff: float = DEFAULT_BACKOFF,

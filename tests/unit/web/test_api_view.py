@@ -38,7 +38,7 @@ def nearby_transport(monkeypatch):
         filename = "nearby_gangnam.xml"
         if request.url.path.endswith("getEgytBassInfoInqire"):
             filename = f"detail_{request.url.params['HPID']}.xml"
-        return httpx.Response(200, text=(FIXTURES / filename).read_text())
+        return httpx.Response(200, text=(FIXTURES / filename).read_text(encoding="utf-8"))
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as transport:
         monkeypatch.setattr(http_retry.httpx, "request", transport.request)
@@ -108,7 +108,7 @@ def test_empty_or_failed_source_does_not_claim_no_hospitals(monkeypatch):
     from er_finder.medical_api import client
 
     monkeypatch.setattr(client, "SERVICE_KEY", "offline-synthetic-key")
-    empty_xml = (FIXTURES / "empty_items_blank.xml").read_text()
+    empty_xml = (FIXTURES / "empty_items_blank.xml").read_text(encoding="utf-8")
     response_transport = httpx.MockTransport(lambda request: httpx.Response(200, text=empty_xml))
     with httpx.Client(transport=response_transport) as transport:
         monkeypatch.setattr(http_retry.httpx, "request", transport.request)

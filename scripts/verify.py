@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import time
+import weakref
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +24,7 @@ BACKEND_FILES = (
     "src/er_finder/models.py",
     "src/er_finder/agent/runner.py",
     "src/er_finder/agent/tools.py",
-    "src/er_finder/agent/prompts.py",
+    "src/er_finder/prompts.py",
     "src/er_finder/medical_api/client.py",
     "src/er_finder/medical_api/parser.py",
     "src/er_finder/medical_api/cache.py",
@@ -33,8 +34,11 @@ BACKEND_FILES = (
     "src/er_finder/search/candidates.py",
     "src/er_finder/search/radius.py",
     "src/er_finder/search/service.py",
-    "src/er_finder/safety.py",
-    "src/er_finder/cli/renderer.py",
+    "src/er_finder/search/planner.py",
+    "src/er_finder/search/reply.py",
+    "src/er_finder/search/location.py",
+    "src/er_finder/search/errors.py",
+    "src/er_finder/agent/renderer.py",
     "src/er_finder/guardrails/triage.py",
     "src/er_finder/guardrails/input_guard.py",
     "src/er_finder/guardrails/pii.py",
@@ -51,12 +55,75 @@ FIXTURE_FILES = (
 )
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
+_local_listen_ports: set[int] = set()
+
+
 def _deny_network(*args, **kwargs):
     raise RuntimeError("Offline verification blocks network access; use local fixtures.")
 
 
+def _is_in_process_listener(address) -> bool:
+    """True for loopback targets served by a socket this process is listening on."""
+    return (
+        isinstance(address, tuple)
+        and len(address) >= 2
+        and address[0] in _LOOPBACK_HOSTS
+        and address[1] in _local_listen_ports
+    )
+
+
+def _guard_connect(original):
+    """Allow only in-process loopback pairs (asyncio self-pipe on Windows), never remote hosts."""
+
+    def guarded(self, address, *args, **kwargs):
+        if _is_in_process_listener(address):
+            return original(self, address, *args, **kwargs)
+        return _deny_network()
+
+    return guarded
+
+
+def _bound_port(sock) -> int | None:
+    """TCP port of a bound socket; None for unbound, closed or non-inet (AF_UNIX) sockets."""
+    try:
+        address = sock.getsockname()
+    except OSError:
+        return None
+    return address[1] if isinstance(address, tuple) and len(address) >= 2 else None
+
+
+def _record_listen(original):
+    def listen(self, *args, **kwargs):
+        result = original(self, *args, **kwargs)
+        port = _bound_port(self)
+        if port is not None:
+            _local_listen_ports.add(port)
+            # A listener dropped without close() must not keep its port trusted.
+            weakref.finalize(self, _local_listen_ports.discard, port)
+        return result
+
+    return listen
+
+
+def _forget_on_close(original):
+    """Stop trusting a port once its listening socket closes (accepted peers share the port)."""
+
+    def close(self):
+        port = _bound_port(self)
+        if port is not None:
+            try:
+                self.getpeername()
+            except OSError:  # unconnected, i.e. the listener itself
+                _local_listen_ports.discard(port)
+        return original(self)
+
+    return close
+
+
 def pytest_configure(config):
     """Prevent accidental Python DNS/TCP/UDP calls, including during collection."""
+    _install_listen_recorder(config)
     for owner, name in (
         (socket, "getaddrinfo"),
         (socket, "gethostbyname"),
@@ -71,8 +138,19 @@ def pytest_configure(config):
         if not hasattr(owner, name):
             continue
         original = getattr(owner, name)
-        setattr(owner, name, _deny_network)
+        guard = _guard_connect(original) if name in {"connect", "connect_ex"} else _deny_network
+        setattr(owner, name, guard)
         config.add_cleanup(lambda o=owner, n=name, value=original: setattr(o, n, value))
+
+
+def _install_listen_recorder(config) -> None:
+    original = socket.socket.listen
+    socket.socket.listen = _record_listen(original)
+    config.add_cleanup(lambda: setattr(socket.socket, "listen", original))
+    original_close = socket.socket.close
+    socket.socket.close = _forget_on_close(original_close)
+    config.add_cleanup(lambda: setattr(socket.socket, "close", original_close))
+    config.add_cleanup(_local_listen_ports.clear)
 
 
 def read_junit(path: Path) -> dict[str, int]:
@@ -212,12 +290,26 @@ def run_verification(
     # Do not forward API credentials, tracing flags, or ambient pytest options.
     environment = {
         key: os.environ[key]
-        for key in ("PATH", "HOME", "TMPDIR", "SYSTEMROOT", "LANG", "LC_ALL")
+        for key in (
+            "PATH",
+            "HOME",
+            "TMPDIR",
+            "SYSTEMROOT",
+            "LANG",
+            "LC_ALL",
+            "USERPROFILE",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "TEMP",
+            "TMP",  # Windows home/temp
+        )
         if key in os.environ
     }
     environment.update(
         {
             "PYTHONPATH": os.pathsep.join((str(root), str(root / "src"))),
+            # Locale code pages (cp949) break reading UTF-8 test sources and decoding output.
+            "PYTHONUTF8": "1",
             "LANGSMITH_TRACING": "false",
             "LANGCHAIN_TRACING_V2": "false",
             "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
@@ -228,7 +320,14 @@ def run_verification(
     returncode, counts, error = None, None, None
     try:
         result = subprocess.run(
-            command, cwd=root, env=environment, capture_output=True, text=True, timeout=timeout
+            command,
+            cwd=root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
         )
         returncode = result.returncode
         log = result.stdout + result.stderr

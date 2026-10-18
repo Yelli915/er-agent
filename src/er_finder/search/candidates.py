@@ -1,7 +1,9 @@
+import heapq
 from datetime import UTC, datetime
+from typing import Any
 
+from er_finder.guardrails.evidence import safe_data
 from er_finder.models import HospitalCandidate
-from er_finder.safety import safe_data
 
 
 def is_stale(timestamp: str | None, now: datetime) -> bool:
@@ -17,8 +19,16 @@ def is_stale(timestamp: str | None, now: datetime) -> bool:
         return True
 
 
-def select_candidates(facilities, beds, acceptance, details, condition, now):
-    selected = []
+def select_candidates(
+    facilities: dict[str, dict[str, Any]],
+    beds: dict[str, dict[str, Any]],
+    acceptance: dict[str, dict[str, Any]],
+    details: dict[str, dict[str, Any]],
+    condition: str | None,
+    now: datetime,
+) -> list[HospitalCandidate]:
+    # Rank on the full-precision distance first so only the winners are built (O(n log 3)).
+    eligible: list[tuple[float, str, int]] = []
     for hpid, facility in facilities.items():
         bed = beds.get(hpid, {})
         count = bed.get("er_beds_available")
@@ -27,6 +37,12 @@ def select_candidates(facilities, beds, acceptance, details, condition, now):
         acceptable = acceptance.get(hpid, {}).get("acceptable")
         if condition and acceptable is not True:
             continue
+        eligible.append((facility["distance_km"], hpid, count))
+
+    selected: list[HospitalCandidate] = []
+    for _, hpid, count in heapq.nsmallest(3, eligible):
+        facility = facilities[hpid]
+        bed = beds.get(hpid, {})
         detail = details.get(hpid, {})
         tel = detail.get("er_tel") or bed.get("er_tel") or facility.get("er_tel")
         safe_tel = safe_data(tel) if tel else None
@@ -47,6 +63,4 @@ def select_candidates(facilities, beds, acceptance, details, condition, now):
                 or bool(bed.get("is_stale", False)),
             )
         )
-    # Sort using the full precision distance, then round only for display.
-    selected.sort(key=lambda h: (facilities[h.hpid]["distance_km"], h.hpid))
-    return selected[:3]
+    return selected

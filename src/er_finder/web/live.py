@@ -1,27 +1,22 @@
-"""Live runner boundary. Importing or inspecting it never creates an agent or calls an API."""
+"""Web backend over the agent runner; importing it never creates an agent or calls an API."""
 
 from __future__ import annotations
 
-import importlib
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import httpx
-from dotenv import load_dotenv
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 
-from er_finder.config import Settings
+from er_finder.agent.factory import default_runner_factory
+from er_finder.config import AGENT_REQUIRED_KEYS, REQUIRED_KEYS, credential_status, load_environment
+from er_finder.demo import demo_runner_factory, is_demo
 from er_finder.memory.store import ERFinderStore
 from er_finder.memory.visit_plan import PendingVisitPlan
 from er_finder.web.contracts import UIReply, WebResult
 
-REQUIRED_KEYS = ("OPENAI_API_KEY", "KAKAO_REST_API_KEY", "EGEN_SERVICE_KEY")
-AGENT_REQUIRED_KEYS = ("OPENAI_API_KEY", "EGEN_SERVICE_KEY")
 _MESSAGES = {
     "not_connected": "실제 서비스에 아직 연결하지 않았습니다. 연결 확인을 실행해 주세요.",
     "keys": "필수 API 키가 설정되지 않았습니다. 설정 상태를 확인해 주세요.",
@@ -50,87 +45,6 @@ class ConnectionStatus:
     message: str
 
 
-def load_environment(dotenv_path: str | Path | None = None) -> None:
-    """Read the project .env without replacing values supplied by the launching process."""
-    path = dotenv_path if dotenv_path is not None else Path(__file__).resolve().parents[3] / ".env"
-    load_dotenv(dotenv_path=path, override=False)
-
-
-def credential_status() -> dict[str, bool]:
-    load_environment()
-    return {name: bool(os.environ.get(name, "").strip()) for name in REQUIRED_KEYS}
-
-
-def _default_runner_factory(**kwargs: Any) -> Any:
-    """Construct the real model, classifier and runner only after explicit connection."""
-    runner_module = importlib.import_module("er_finder.agent.runner")
-    classifier_module = importlib.import_module("er_finder.guardrails.triage")
-    model_module = importlib.import_module("langchain_openai")
-    provider_module = importlib.import_module("er_finder.web.provider")
-    settings = Settings()
-    timeout = settings.model_timeout
-    http_client = httpx.Client(timeout=timeout)
-    provider = None
-    try:
-        provider = provider_module.LiveProvider(kakao_key=os.environ.get("KAKAO_REST_API_KEY", ""))
-        model = model_module.ChatOpenAI(
-            model=settings.main_model,
-            reasoning_effort=settings.main_reasoning_effort,
-            max_tokens=settings.main_max_output_tokens,
-            http_client=http_client,
-            timeout=timeout,
-            max_retries=0,
-        )
-        classifier_model = model_module.ChatOpenAI(
-            model=settings.classifier_model,
-            temperature=settings.classifier_temperature,
-            max_tokens=settings.classifier_max_tokens,
-            http_client=http_client,
-            timeout=timeout,
-            max_retries=0,
-        )
-        classifier = classifier_module.InputClassifier(classifier_model)
-        runner = runner_module.ERFinder(
-            provider=provider, model=model, classifier=classifier, **kwargs
-        )
-        return _ManagedRunner(runner, provider, http_client)
-    except Exception:
-        try:
-            if provider is not None:
-                provider.close()
-        finally:
-            http_client.close()
-        raise
-
-
-class _ManagedRunner:
-    """Close only explicitly owned resources; leave SDK private clients untouched."""
-
-    def __init__(self, runner: Any, provider: Any, http_client: httpx.Client):
-        self._runner, self._provider, self._http_client = runner, provider, http_client
-
-    def chat(self, text: str, *, force_refresh: bool = False) -> Any:
-        return self._runner.chat(text, force_refresh=force_refresh)
-
-    def approve(self, approved: bool) -> Any:
-        return self._runner.approve(approved)
-
-    def end_session(self) -> None:
-        try:
-            self._runner.end_session()
-        finally:
-            self._provider.clear_cache()
-
-    def close(self) -> None:
-        try:
-            self.end_session()
-        finally:
-            try:
-                self._provider.close()
-            finally:
-                self._http_client.close()
-
-
 class RunnerBackend:
     """Adapt ChatResult to UI-owned models and invalidate unsuccessful/past approvals.
 
@@ -148,12 +62,24 @@ class RunnerBackend:
         self.user_id = user_id or str(uuid4())
         self._store = store if store is not None else InMemoryStore()
         self.profile = ERFinderStore(self._store, self.user_id)
-        self._factory = runner_factory or _default_runner_factory
+        self._factory = runner_factory or (
+            demo_runner_factory if is_demo() else default_runner_factory
+        )
         self._runner: Any = None
         self._transport = "car"
         self._category = "not_connected"
         self._reply: UIReply | None = None
         self._pending: PendingVisitPlan | None = None
+        self._progress: Callable[[str], None] | None = None
+
+    def set_progress(self, listener: Callable[[str], None] | None) -> None:
+        """Show search steps while a request runs; applied to the runner per request."""
+        self._progress = listener
+
+    def _attach_progress(self) -> None:
+        setter = getattr(self._runner, "set_progress", None)
+        if callable(setter):
+            setter(self._progress)
 
     def status(self) -> ConnectionStatus:
         return ConnectionStatus(
@@ -168,7 +94,7 @@ class RunnerBackend:
             self._invalidate("contract")
             return self.status()
         checks = credential_status()
-        if not all(checks.get(key, False) for key in AGENT_REQUIRED_KEYS):
+        if not is_demo() and not all(checks.get(key, False) for key in AGENT_REQUIRED_KEYS):
             self._invalidate("keys")
             return self.status()
         if self._runner is not None and transport == self._transport:
@@ -248,7 +174,7 @@ class RunnerBackend:
             hospital = next((item for item in hospitals if item.hpid == hpid), None)
             if hospital is None or hospital.name != name or selected != hpid:
                 raise ConnectionUnavailable("contract")
-            pending = PendingVisitPlan(hpid=hpid, name=name, symptom_summary=summary)
+            pending = PendingVisitPlan(hpid=str(hpid), name=str(name), symptom_summary=str(summary))
         note = getattr(result, "note", None)
         if note is not None and not isinstance(note, str):
             raise ConnectionUnavailable("contract")
@@ -268,6 +194,7 @@ class RunnerBackend:
             return WebResult(note=self.status().message)
         self._pending = None
         try:
+            self._attach_progress()
             return self._receive(self._runner.chat(text, force_refresh=force_refresh))
         except ConnectionUnavailable as exc:
             return self._failed(exc.category)
@@ -286,6 +213,7 @@ class RunnerBackend:
                 note="현재 방문 계획의 승인 또는 거절을 먼저 완료해 주세요.",
             )
         try:
+            self._attach_progress()
             return self._receive(self._runner.chat(f"{index + 1}번"), selected=hpid)
         except ConnectionUnavailable as exc:
             return self._failed(exc.category)
@@ -332,3 +260,15 @@ class RunnerBackend:
         except Exception:
             self._invalidate("storage")
             raise ConnectionUnavailable("storage") from None
+
+
+__all__ = [
+    "AGENT_REQUIRED_KEYS",
+    "REQUIRED_KEYS",
+    "ConnectionStatus",
+    "ConnectionUnavailable",
+    "RunnerBackend",
+    "credential_status",
+    "default_runner_factory",
+    "load_environment",
+]
