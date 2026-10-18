@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 RANK = {"standard": 0, "urgent": 1, "critical": 2}
-DEFAULT_PATH = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "golden" / "triage.json"
+DEFAULT_PATH = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "golden" / "triage.json"
 
 
 def load_cases(path: Path | str = DEFAULT_PATH) -> list[dict[str, Any]]:

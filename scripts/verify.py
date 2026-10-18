@@ -24,7 +24,7 @@ BACKEND_FILES = (
     "src/er_finder/models.py",
     "src/er_finder/agent/runner.py",
     "src/er_finder/agent/tools.py",
-    "src/er_finder/agent/prompts.py",
+    "src/er_finder/prompts.py",
     "src/er_finder/medical_api/client.py",
     "src/er_finder/medical_api/parser.py",
     "src/er_finder/medical_api/cache.py",
@@ -34,8 +34,11 @@ BACKEND_FILES = (
     "src/er_finder/search/candidates.py",
     "src/er_finder/search/radius.py",
     "src/er_finder/search/service.py",
-    "src/er_finder/safety.py",
-    "src/er_finder/cli/renderer.py",
+    "src/er_finder/search/planner.py",
+    "src/er_finder/search/reply.py",
+    "src/er_finder/search/location.py",
+    "src/er_finder/search/errors.py",
+    "src/er_finder/agent/renderer.py",
     "src/er_finder/guardrails/triage.py",
     "src/er_finder/guardrails/input_guard.py",
     "src/er_finder/guardrails/pii.py",
@@ -81,16 +84,23 @@ def _guard_connect(original):
     return guarded
 
 
+def _bound_port(sock) -> int | None:
+    """TCP port of a bound socket; None for unbound, closed or non-inet (AF_UNIX) sockets."""
+    try:
+        address = sock.getsockname()
+    except OSError:
+        return None
+    return address[1] if isinstance(address, tuple) and len(address) >= 2 else None
+
+
 def _record_listen(original):
     def listen(self, *args, **kwargs):
         result = original(self, *args, **kwargs)
-        try:
-            port = self.getsockname()[1]
+        port = _bound_port(self)
+        if port is not None:
             _local_listen_ports.add(port)
             # A listener dropped without close() must not keep its port trusted.
             weakref.finalize(self, _local_listen_ports.discard, port)
-        except OSError:
-            pass
         return result
 
     return listen
@@ -100,14 +110,12 @@ def _forget_on_close(original):
     """Stop trusting a port once its listening socket closes (accepted peers share the port)."""
 
     def close(self):
-        try:
-            port = self.getsockname()[1]
+        port = _bound_port(self)
+        if port is not None:
             try:
                 self.getpeername()
             except OSError:  # unconnected, i.e. the listener itself
                 _local_listen_ports.discard(port)
-        except OSError:
-            pass  # unbound or already closed
         return original(self)
 
     return close

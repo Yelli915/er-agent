@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from er_finder import benchmark
-from er_finder.benchmark import Prices, Scenario, percentile, run_benchmark, summarize
+from er_finder.evaluation import benchmark
+from er_finder.evaluation.benchmark import Prices, Scenario, percentile, run_benchmark, summarize
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_percentile_interpolates_and_handles_edges():

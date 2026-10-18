@@ -160,7 +160,7 @@ python scripts/benchmark.py --compare docs/benchmarks/baseline.json docs/benchma
 | 단계 | 상태 | 산출물 |
 |---|---|---|
 | 모델 생성 분리 | 완료 | `agent/factory.py` (`web/live.py`와 공유) |
-| 분류기 계측 | 완료 | `agent/usage.py`, `RunDiagnostics.classifier_*` |
+| 분류기 계측 | 완료 | `usage.py`, `RunDiagnostics.classifier_*` |
 | 벤치마크 구현과 테스트 | 완료 | `scripts/benchmark.py`, `er_finder/benchmark.py`, `tests/unit/test_benchmark.py` |
 | 개선 적용 | 완료(오프라인) | `ServerPlannedCalls`. 스위치를 끄면 메인 모델 5회, 켜면 1회 호출한다 (`tests/unit/agent/test_runner.py`) |
 | 기준선과 개선 후 실측 | 미실행 | 실제 키로 위 명령을 실행해야 한다 |

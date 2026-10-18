@@ -11,8 +11,8 @@ from langchain.agents.middleware import (
 from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
 
-from er_finder.agent.prompts import SYSTEM_PROMPT
 from er_finder.guardrails.evidence import sanitize_prose
+from er_finder.prompts import SYSTEM_PROMPT
 
 
 def EmergencyInputGuard(session):

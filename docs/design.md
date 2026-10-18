@@ -12,7 +12,7 @@
 
 모두 Pydantic 모델. 모델의 Structured Output 스키마이자 모듈 간 전달 타입이다.
 
-**`TriageAssessment`** — 분류 모델(gpt-4o-mini) 출력
+`TriageAssessment`는 분류 모델(gpt-4o-mini)의 출력이다.
 
 | 필드 | 타입 | 제약 |
 |---|---|---|
@@ -21,7 +21,7 @@
 | `injection` | `bool` | `True`면 가드레일 차단 |
 | `confidence` | `float` 0.0~1.0 | 0.6 미만이면 `severity` 한 단계 상향 |
 
-**`HospitalCandidate`** — 후보 병원
+`HospitalCandidate`는 후보 병원이다.
 
 | 필드 | 타입 | 제약 |
 |---|---|---|
@@ -32,7 +32,7 @@
 | `accepts_condition` | `yes` \| `no` \| `unknown` | `standard`이면 항상 `unknown` |
 | `er_tel` | `str \| None` | 도구 결과와 동일 |
 
-**`ERSearchReply`** — 최종 응답
+`ERSearchReply`는 최종 응답이다.
 
 | 필드 | 제약 |
 |---|---|
@@ -111,7 +111,7 @@ after_agent    : EvidenceCheckMiddleware
 | 재시도 실패 + 캐시 있음 | 60초 캐시, `stale=True` | '갱신 지연' + 전화 확인 권고 |
 | 재시도 실패 + 캐시 없음 | 빈 목록 | 모델이 상황 설명 |
 | `geocode` 0건 | `found=False` | 위치 재질문 |
-| 중증 수용 조회 실패 | `acceptable=None` | `unknown` → '확인 불가' |
+| 중증 수용 조회 실패 | `acceptable=None` | `unknown`이며 '확인 불가'로 표시 |
 | `get_er_detail` 실패 | 목록 값으로 대체 | 누락 필드 '확인 불가' |
 | 모델 호출 10회 도달 | 현재 후보로 종료 응답 | 정상 종료 |
 | 반경 3회 확대 후 후보 0 | `no_candidate_reason` | 후보 없음 + 119 안내 |
@@ -148,8 +148,8 @@ after_agent    : EvidenceCheckMiddleware
 | `condition` | 사용 컬럼 |
 |---|---|
 | 심근경색 | `mkioskty1` ([재관류중재술] 심근경색) |
-| 뇌출혈 | `mkioskty3`(거미막하출혈) **OR** `mkioskty4`(그 외 뇌출혈수술) 중 하나라도 `Y` |
-| 뇌졸중 | `mkioskty2`(뇌경색 재관류) — 실질적으로 "뇌경색"만 의미 |
+| 뇌출혈 | `mkioskty3`(거미막하출혈)과 `mkioskty4`(그 외 뇌출혈수술) 중 하나라도 `Y` |
+| 뇌졸중 | `mkioskty2`(뇌경색 재관류). 실질적으로 뇌경색만 의미 |
 | 중증외상 | 없음 (Sprint 2로 연기) |
 | 화상 | `mkioskty19` ([중증화상] 전문치료) |
 | 분만 | `mkioskty16` ([산부인과응급] 분만) |
@@ -176,7 +176,7 @@ after_agent    : EvidenceCheckMiddleware
 
 ## C. 화면(Streamlit) 연결 계약
 
-화면은 의료기관 직접 조회, 에이전트 상담, 연결 상태의 세 탭이다. 실제 API 응답과 runner 결과를 표시하며, 백엔드 실패 시 원인을 숨기거나 다른 데이터로 대체하지 않는다.
+화면은 의료기관 직접 조회, 에이전트 상담, 연결 상태의 세 탭으로 구성한다. 실제 API 응답과 runner 결과를 그대로 표시하며, 백엔드가 실패하더라도 원인을 숨기거나 다른 데이터로 대체하지 않는다.
 
 ```text
 streamlit_app.py → web/app.py
@@ -185,24 +185,25 @@ streamlit_app.py → web/app.py
   └ 연결 상태 → RunnerBackend.status()
 ```
 
-`WebSession(backend=RunnerBackend())`를 브라우저 세션에 보관한다. 조회·대화·승인은 사용자 입력과 버튼 이벤트에서만 실행하며 화면 재실행과 연결 상태 조회는 새 검색을 시작하지 않는다. 의료기관 조회(목록·상세)는 전체 상담의 병상·중증 수용 판정으로 취급하지 않는다.
+`WebSession(backend=RunnerBackend())`는 브라우저 세션마다 하나씩 보관한다. 조회, 대화, 승인은 사용자의 입력과 버튼 이벤트에서만 실행하며, 화면을 다시 그리거나 연결 상태를 조회할 때는 새 검색을 시작하지 않는다. 의료기관 조회(목록과 상세)의 결과는 상담에서 이루어지는 병상 및 중증 수용 판정과 구분한다.
 
 ### C.1 화면↔runner 경계
 
 | 호출 | 계약 |
 |---|---|
-| `status()` | `connected`, `checks`, `category`, `message` 반환. 키 값 미포함, 외부 요청 없음 |
-| `connect(transport=...)` | 실제 provider·모델·runner 조립. import·계약·실행 오류를 화면용 상태로 변환 |
-| `chat(text, *, transport, force_refresh=False)` | 입력을 runner에 전달. 강제 갱신은 마지막 검색의 재조회에만 사용 |
-| `select_hospital(hpid)` | 현재 응답의 후보만 선택. 저장하지 않고 승인 대기 반환 |
-| `approve(approved)` | 현재 승인 대기를 한 번 처리. 실패·반복 interrupt 시 이전 승인을 재사용하지 않음 |
-| `reset()` / `forget()` | 대화·위치·후보·승인 대기 초기화(프로필 유지) / 대화와 프로필 제거 + 화면의 API 조회 기록 삭제 |
+| `status()` | `connected`, `checks`, `category`, `message`를 반환한다. 키 값은 포함하지 않으며 외부 요청을 보내지 않는다. |
+| `connect(transport=...)` | 실제 provider, 모델, runner를 조립한다. import, 계약, 실행 단계의 오류는 화면용 상태로 변환한다. |
+| `chat(text, *, transport, force_refresh=False)` | 입력을 runner에 전달한다. 강제 갱신은 마지막 검색을 다시 조회할 때만 사용한다. |
+| `select_hospital(hpid)` | 현재 응답에 포함된 후보만 선택할 수 있다. 저장하지 않고 승인 대기 상태를 반환한다. |
+| `approve(approved)` | 현재의 승인 대기를 한 번만 처리한다. 실패하거나 interrupt가 반복되면 이전 승인을 재사용하지 않는다. |
+| `reset()` | 대화, 위치, 후보, 승인 대기를 초기화하고 프로필은 유지한다. |
+| `forget()` | 사용자의 대화와 프로필을 제거하고, 화면에 남은 API 조회 기록도 삭제한다. |
 
-`WebResult`는 `reply`, `pending_approval`, `note`를 가진다. `UIReply`·`UIHospital`은 표시용 변환이며 근거 검증을 대신하지 않는다. 승인 대기는 선택한 후보의 ID·이름과 일치해야 한다.
+`WebResult`는 `reply`, `pending_approval`, `note`를 가진다. `UIReply`와 `UIHospital`은 표시를 위한 변환일 뿐 근거 검증을 대신하지 않는다. 승인 대기는 선택한 후보의 ID 및 이름과 일치해야 한다.
 
 ### C.2 세션과 저장
 
-브라우저마다 `user_id`와 Store를 분리한다. 기본 주소는 동의한 경우에만 저장한다. 이동수단 변경·새 대화 등으로 검색 문맥이 바뀌면 기존 후보와 승인 대기를 먼저 취소한 뒤 이벤트를 처리하므로, 승인과 설정 변경이 한 이벤트에 들어와도 이전 계획은 저장되지 않는다. 기준은 **승인 전 저장 0회, 거절 후 0회, 승인 후 1회**이며 결과를 확인하지 못해도 자동 재시도로 중복 저장하지 않는다. 메모리 저장은 예약·접수가 아니고 서버 종료 후 영속성을 보장하지 않는다.
+브라우저마다 `user_id`와 Store를 분리하며, 기본 주소는 사용자가 동의한 경우에만 저장한다. 이동수단 변경이나 새 대화처럼 검색 문맥이 바뀌면 기존 후보와 승인 대기를 먼저 취소한 뒤 해당 이벤트를 처리한다. 따라서 승인과 설정 변경이 같은 이벤트로 들어오더라도 이전 계획은 저장되지 않는다. 저장 횟수는 승인 전 0회, 거절 후 0회, 승인 후 1회여야 하며, 결과를 확인하지 못한 경우에도 자동으로 재시도하여 중복 저장하지 않는다. 메모리에 저장하는 것은 병원 예약이나 접수가 아니며, 서버가 종료되면 사라진다.
 
 ### C.3 코드 책임과 백엔드 경계
 
@@ -214,8 +215,17 @@ streamlit_app.py → web/app.py
 | `web/state.py`, `web/contracts.py` | 브라우저별 대화와 표시용 계약 |
 | `scripts/verify.py` | 오프라인 테스트 실행과 JSON/JUnit/로그 기록 |
 
-모델·검색·메모리·가드레일 오류는 담당 모듈에서 고치며 상담 어댑터는 실패를 표시만 한다. 좌표를 지정하면 주소 API를 건너뛰고 기관 주소의 시도·시군구로 병상·중증 API를 조회한다. 조회 실패와 정상 빈 응답을 구분하고, 실패한 조회는 같은 턴에서 반복하지 않는다. OpenAI·E-Gen은 필수, 카카오는 주소 검색용 선택 설정이다. `scripts/run_local.py`는 프로젝트 `.env`를 우선 적용하고 일반 factory와 `streamlit run`은 기존 환경변수를 존중한다.
+모델, 검색, 메모리, 가드레일의 오류는 해당 모듈에서 수정하며, 상담 어댑터는 실패를 표시하기만 한다. 좌표를 지정하면 주소 API를 건너뛰고, 기관 주소에서 얻은 시도와 시군구로 병상 및 중증 수용 API를 조회한다. 조회 실패와 정상적인 빈 응답을 구분하며, 실패한 조회는 같은 턴에서 반복하지 않는다. OpenAI와 E-Gen은 필수이고 카카오는 주소 검색을 쓸 때만 필요하다. `scripts/run_local.py`는 프로젝트의 `.env`를 우선 적용하고, 일반 factory와 `streamlit run`은 기존 환경변수를 그대로 사용한다.
 
-### C.4 반드시 확인할 사용자 흐름
+### C.4 확인해야 할 사용자 흐름
 
-브라우저별 대화·주소·저장 분리 / 기본 주소 동의·철회 / 승인 전·거절 후·승인 후 저장 횟수 / 이동수단 변경·새 대화와 승인 이벤트 중첩 / 재실행만으로 조회·저장이 반복되지 않음 / 전체 삭제 후 기록 잔존 없음 / API 오류·빈 응답·누락 필드 구분과 원문 예외·키 비노출 / 위치 재질문, 반경·병원 ID·전화·병상 근거 일치, 위급 입력의 119 안내. 이 항목은 `tests/integration/`, `tests/unit/web/`가 실제 runner·메모리·LangGraph(interrupt/resume)로 확인한다.
+다음 항목은 `tests/integration/`과 `tests/unit/web/`에서 실제 runner, 메모리, LangGraph(interrupt와 resume 포함)로 확인한다.
+
+- 브라우저별로 대화, 주소, 저장 기록이 섞이지 않는다.
+- 기본 주소의 저장 동의와 철회가 반영된다.
+- 저장 횟수가 승인 전 0회, 거절 후 0회, 승인 후 1회다.
+- 이동수단 변경이나 새 대화가 승인 이벤트와 겹쳐도 이전 계획이 저장되지 않는다.
+- 화면을 다시 그리는 것만으로 조회나 저장이 반복되지 않는다.
+- 전체 삭제 후에는 상담 기록, 프로필, 의료기관 조회 결과가 남지 않는다.
+- API 오류, 빈 응답, 누락 필드를 구분하여 표시하고 원문 예외나 키 값을 노출하지 않는다.
+- 위치 재질문, 검색 반경, 병원 ID·전화·병상 근거의 일치, 위급 입력에 대한 119 안내가 올바르게 동작한다.

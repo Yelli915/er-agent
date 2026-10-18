@@ -6,56 +6,20 @@ from datetime import datetime
 from threading import Event, RLock
 from zoneinfo import ZoneInfo
 
+from er_finder.guardrails.input_guard import assess_input
+from er_finder.guardrails.pii import mask_pii
 from er_finder.memory.state import ERFinderState
-from er_finder.models import DISCLAIMER, ERSearchReply
-from er_finder.safety import assess_input, mask_pii, sanitize_prose
-from er_finder.search.candidates import select_candidates
-from er_finder.search.coordinates import extract_coordinates
 from er_finder.search.distance import distance_km
+from er_finder.search.errors import ToolOrderError
+from er_finder.search.location import extract_location
+from er_finder.search.planner import CallPlanner
 from er_finder.search.radius import radius_sequence
+from er_finder.search.reply import ReplyBuilder
+
+__all__ = ["SearchSession", "ToolOrderError", "extract_location"]
 
 
-class ToolOrderError(ValueError):
-    pass
-
-
-def extract_location(text: str) -> str | None:
-    coordinates = extract_coordinates(text)
-    if coordinates is not None:
-        return coordinates
-    # Offline extraction; live model may additionally extract a precise query from the input.
-    if "우리 동네" in text or "우리동네" in text:
-        return "우리 동네"
-    known = (
-        "강남구 역삼동",
-        "역삼동",
-        "강남구",
-        "강남역",
-        "경포대",
-        "강릉",
-        "영월군 상동읍",
-        "상동읍",
-        "영월군",
-        "마포구 합정동",
-        "합정동",
-        "마포구",
-    )
-    for place in known:
-        if place in text:
-            return place
-    # Strip Korean particles following administrative names rather than swallowing symptoms.
-    tokens = re.findall(
-        r"[가-힣0-9]+?(?:특별자치도|특별시|광역시|시|군|구|읍|면|동|역|대로|로)(?=\s|[,.!?]|(?:에서|이에요|인데|입니다|이야)|$)",
-        text,
-    )
-    tokens = [t for t in tokens if t not in {"다시", "혹시", "응급시", "응급실로", "병원으로"}]
-    if tokens:
-        return " ".join(tokens)
-    m = re.search(r"(?:^|[,.!?]\s*)([가-힣A-Za-z0-9 ]{2,35}?)\s*(?:근처|주변|앞에서)", text)
-    return m[1].strip() if m else None
-
-
-class SearchSession(ERFinderState):
+class SearchSession(CallPlanner, ReplyBuilder, ERFinderState):
     def __init__(self, provider, transport="car", now=None):
         super().__init__()
         self.provider = provider
@@ -139,112 +103,6 @@ class SearchSession(ERFinderState):
         self.beds_ready = Event()
         self.allow_severe_batch = False
         self.planned_calls = None
-
-    def regions(self):
-        return [
-            dict(sido=s, sigungu=g)
-            for s, g in sorted(
-                {
-                    (r["sido"], r["sigungu"])
-                    for r in self.facilities.values()
-                    if r.get("sido") and r.get("sigungu") is not None
-                }
-            )
-        ]
-
-    def _candidates(self):
-        if self.lookup_error:
-            self.candidates = []
-            return self.candidates
-        self.candidates = select_candidates(
-            self.facilities,
-            self.beds,
-            self.acceptance,
-            self.details,
-            self.triage.condition,
-            self.now(),
-        )
-        return self.candidates
-
-    def next_calls(self):
-        if self.lookup_error:
-            return []
-        if self.assessment.blocked or self.assessment.greeting:
-            return []
-        if not self.location:
-            if self.location_query and not self.geo_attempted:
-                return [{"name": "geocode", "args": {"query": self.location_query}}]
-            return []
-        if not self.listed:
-            return [
-                {
-                    "name": "list_nearby_ers",
-                    "args": {
-                        "lat": self.location["lat"],
-                        "lon": self.location["lon"],
-                        "radius_km": self.radius,
-                    },
-                }
-            ]
-        if not self.beds_checked:
-            calls = [
-                {
-                    "name": "get_er_bed_status",
-                    "args": {"regions": self.regions(), "hpids": sorted(self.facilities)},
-                }
-            ]
-            new_regions = [
-                r
-                for r in self.regions()
-                if (r["sido"], r["sigungu"]) not in self.severe_region_cache
-            ]
-            if self.triage.condition and new_regions:
-                calls.append(
-                    {
-                        "name": "get_severe_acceptance",
-                        "args": {"regions": new_regions, "condition": self.triage.condition},
-                    }
-                )
-            return calls
-        positive_beds = any(
-            isinstance(b.get("er_beds_available"), int) and b["er_beds_available"] > 0
-            for b in self.beds.values()
-        )
-        if self.triage.condition and not self.severe_checked and positive_beds:
-            return [
-                {
-                    "name": "get_severe_acceptance",
-                    "args": {
-                        "regions": [
-                            r
-                            for r in self.regions()
-                            if (r["sido"], r["sigungu"]) not in self.severe_region_cache
-                        ],
-                        "condition": self.triage.condition,
-                    },
-                }
-            ]
-        candidates = self._candidates()
-        if not candidates and self.radius_index < len(self.radii) - 1:
-            return [
-                {
-                    "name": "list_nearby_ers",
-                    "args": {
-                        "lat": self.location["lat"],
-                        "lon": self.location["lon"],
-                        "radius_km": self.radii[self.radius_index + 1],
-                    },
-                }
-            ]
-        return [
-            {"name": "get_er_detail", "args": {"hpid": h.hpid}}
-            for h in candidates
-            if h.hpid not in self.details
-        ]
-
-    def _require(self, name, arguments):
-        if not any(c["name"] == name and c["args"] == arguments for c in self.next_calls()):
-            raise ToolOrderError("도구 순서 또는 인자가 현재 검색 상태와 일치하지 않습니다.")
 
     def fail_lookup(self):
         with self._lock:
@@ -390,93 +248,6 @@ class SearchSession(ERFinderState):
             self.details[hpid] = result or {}
             self.audit.append({"name": "get_er_detail", "hpid": hpid})
             return {"hpid": hpid, "detail": self.details[hpid], **self.status()}
-
-    def make_reply(self):
-        self._candidates()
-        reason = None
-        action = "후보 병원에 전화해 현재 수용 가능 여부를 확인하세요."
-        if self.assessment.blocked:
-            self.candidates = []
-            reason = "서비스 범위 또는 입력 안전 정책에 따라 검색하지 않았습니다."
-            action = "응급실 안내를 위해 현재 위치와 증상을 알려주세요."
-        elif self.assessment.greeting:
-            self.candidates = []
-            reason = "응급실 찾기를 시작하려면 위치와 증상이 필요합니다."
-            action = "현재 위치와 증상을 알려주세요."
-        elif self.lookup_error:
-            self.candidates = []
-            reason = self.lookup_error
-            action = "연결 상태를 확인하고 다시 조회하세요. 위급한 경우 즉시 119에 연락하세요."
-        elif not self.location:
-            reason = "현재 위치를 확인할 수 없습니다."
-            action = "현재 위치를 주소·동 이름·건물명·역 이름으로 알려주세요."
-        elif not self.candidates:
-            if self.triage.condition == "중증외상" and any(
-                b.get("er_beds_available", 0)
-                and self.acceptance.get(hpid, {}).get("acceptable") is None
-                for hpid, b in self.beds.items()
-            ):
-                reason = (
-                    "중증외상은 현재 응급의료 API에서 병원별 수용 가능 여부를 "
-                    "정확히 확인할 수 없어 후보 병원을 확정하지 않았습니다."
-                )
-                action = "119에 연락해 현재 이송 가능한 응급의료기관 안내를 받으세요."
-            else:
-                reason = (
-                    f"반경 {self.radius}km 내 가용 병상과 필요한 수용 조건을 "
-                    "확인한 후보가 없습니다."
-                )
-                if self.triage.condition and any(
-                    b.get("er_beds_available", 0)
-                    and self.acceptance.get(hpid, {}).get("acceptable") is None
-                    for hpid, b in self.beds.items()
-                ):
-                    reason += " 중증 수용 여부 확인 불가인 병원이 포함되어 있습니다."
-                action = "119에 연락해 수용 가능한 응급실 안내를 받으세요."
-        if self.specialty_requested and self.candidates:
-            action = "소아·봉합 등 필요한 진료의 현재 가능 여부는 병원에 전화해 확인하세요."
-        if self.triage.severity == "critical":
-            action = "119에 즉시 신고하세요. 검색 결과를 기다리지 마세요."
-        return ERSearchReply(
-            severity=self.triage.severity,
-            call_119_first=self.triage.severity == "critical",
-            search_radius_km=self.radius,
-            hospitals=self.candidates,
-            no_candidate_reason=reason,
-            data_timestamp=self.data_timestamp,
-            next_action=action,
-            disclaimer=DISCLAIMER,
-        )
-
-    def check_evidence(self, proposal):
-        canonical = self.make_reply().model_dump()
-        if hasattr(proposal, "model_dump"):
-            proposal = proposal.model_dump()
-        if not isinstance(proposal, dict):
-            return ERSearchReply.model_validate(canonical)
-        rows = proposal.get("hospitals", [])
-        if not isinstance(rows, list):
-            rows = []
-            self.evidence_corrections += 1
-        proposed = {}
-        for hospital in rows:
-            if not isinstance(hospital, dict) or not isinstance(hospital.get("hpid"), str):
-                self.evidence_corrections += 1
-                continue
-            proposed[hospital["hpid"]] = hospital
-        self.evidence_corrections += sum(hpid not in self.facilities for hpid in proposed)
-        for hospital in canonical["hospitals"]:
-            candidate = proposed.get(hospital["hpid"])
-            if candidate is not None:
-                self.evidence_corrections += sum(
-                    candidate.get(field) != value for field, value in hospital.items()
-                )
-        prose = proposal.get("next_action", "")
-        if isinstance(prose, str) and sanitize_prose(prose) != prose:
-            self.evidence_corrections += 1
-        # A model proposal cannot change verified source data, the selected radius,
-        # emergency instructions or provenance. Keep the source-derived reply.
-        return ERSearchReply.model_validate(canonical)
 
     def snapshot(self):
         return {

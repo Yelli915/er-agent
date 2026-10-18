@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from er_finder import golden  # noqa: E402
+from er_finder.evaluation import golden  # noqa: E402
 from er_finder.guardrails.input_guard import assess_input  # noqa: E402
 
 

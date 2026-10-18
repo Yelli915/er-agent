@@ -1,27 +1,21 @@
-"""Live runner boundary. Importing or inspecting it never creates an agent or calls an API."""
+"""Web backend over the agent runner; importing it never creates an agent or calls an API."""
 
 from __future__ import annotations
 
-import importlib
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import httpx
-from dotenv import load_dotenv
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 
-from er_finder.config import Settings
+from er_finder.agent.factory import default_runner_factory
+from er_finder.config import AGENT_REQUIRED_KEYS, REQUIRED_KEYS, credential_status, load_environment
 from er_finder.memory.store import ERFinderStore
 from er_finder.memory.visit_plan import PendingVisitPlan
 from er_finder.web.contracts import UIReply, WebResult
 
-REQUIRED_KEYS = ("OPENAI_API_KEY", "KAKAO_REST_API_KEY", "EGEN_SERVICE_KEY")
-AGENT_REQUIRED_KEYS = ("OPENAI_API_KEY", "EGEN_SERVICE_KEY")
 _MESSAGES = {
     "not_connected": "실제 서비스에 아직 연결하지 않았습니다. 연결 확인을 실행해 주세요.",
     "keys": "필수 API 키가 설정되지 않았습니다. 설정 상태를 확인해 주세요.",
@@ -48,69 +42,6 @@ class ConnectionStatus:
     checks: dict[str, bool]
     category: str
     message: str
-
-
-def load_environment(dotenv_path: str | Path | None = None) -> None:
-    """Read the project .env without replacing values supplied by the launching process."""
-    path = dotenv_path if dotenv_path is not None else Path(__file__).resolve().parents[3] / ".env"
-    load_dotenv(dotenv_path=path, override=False)
-
-
-def credential_status() -> dict[str, bool]:
-    load_environment()
-    return {name: bool(os.environ.get(name, "").strip()) for name in REQUIRED_KEYS}
-
-
-def default_runner_factory(**kwargs: Any) -> Any:
-    """Construct the real model, classifier and runner only after explicit connection."""
-    runner_module = importlib.import_module("er_finder.agent.runner")
-    factory_module = importlib.import_module("er_finder.agent.factory")
-    provider_module = importlib.import_module("er_finder.web.provider")
-    settings = Settings()
-    http_client = httpx.Client(timeout=settings.model_timeout)
-    provider = None
-    try:
-        provider = provider_module.LiveProvider(kakao_key=os.environ.get("KAKAO_REST_API_KEY", ""))
-        model, classifier = factory_module.build_models(settings, http_client)
-        runner = runner_module.ERFinder(
-            provider=provider, model=model, classifier=classifier, **kwargs
-        )
-        return _ManagedRunner(runner, provider, http_client)
-    except Exception:
-        try:
-            if provider is not None:
-                provider.close()
-        finally:
-            http_client.close()
-        raise
-
-
-class _ManagedRunner:
-    """Close only explicitly owned resources; leave SDK private clients untouched."""
-
-    def __init__(self, runner: Any, provider: Any, http_client: httpx.Client):
-        self._runner, self._provider, self._http_client = runner, provider, http_client
-
-    def chat(self, text: str, *, force_refresh: bool = False) -> Any:
-        return self._runner.chat(text, force_refresh=force_refresh)
-
-    def approve(self, approved: bool) -> Any:
-        return self._runner.approve(approved)
-
-    def end_session(self) -> None:
-        try:
-            self._runner.end_session()
-        finally:
-            self._provider.clear_cache()
-
-    def close(self) -> None:
-        try:
-            self.end_session()
-        finally:
-            try:
-                self._provider.close()
-            finally:
-                self._http_client.close()
 
 
 class RunnerBackend:
@@ -314,3 +245,15 @@ class RunnerBackend:
         except Exception:
             self._invalidate("storage")
             raise ConnectionUnavailable("storage") from None
+
+
+__all__ = [
+    "AGENT_REQUIRED_KEYS",
+    "REQUIRED_KEYS",
+    "ConnectionStatus",
+    "ConnectionUnavailable",
+    "RunnerBackend",
+    "credential_status",
+    "default_runner_factory",
+    "load_environment",
+]

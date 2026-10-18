@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from er_finder.benchmark import LOCATION
+from er_finder.evaluation.benchmark import LOCATION
 
 pytestmark = pytest.mark.live
 

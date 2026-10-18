@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from langgraph.store.memory import InMemoryStore
 
+from er_finder import config
 from er_finder.memory.store import ERFinderStore
 from er_finder.web.contracts import UIReply
 
@@ -14,7 +15,7 @@ from er_finder.web.contracts import UIReply
 def live(monkeypatch):
     assert importlib.util.find_spec("er_finder.web.live") is not None, "live adapter is missing"
     module = importlib.import_module("er_finder.web.live")
-    monkeypatch.setattr(module, "load_dotenv", lambda **kwargs: False)
+    monkeypatch.setattr(config, "load_dotenv", lambda **kwargs: False)
     for name in ("OPENAI_API_KEY", "KAKAO_REST_API_KEY", "EGEN_SERVICE_KEY"):
         monkeypatch.setenv(name, "offline-test-value")
     return module
@@ -122,7 +123,7 @@ def test_status_checks_keys_without_importing_or_constructing_runner(live, monke
 def test_dotenv_respects_existing_environment(live, tmp_path, monkeypatch):
     from dotenv import load_dotenv
 
-    monkeypatch.setattr(live, "load_dotenv", load_dotenv)
+    monkeypatch.setattr(config, "load_dotenv", load_dotenv)
     path = tmp_path / ".env"
     path.write_text("OPENAI_API_KEY=file-value\nKAKAO_REST_API_KEY=file-kakao\n")
     monkeypatch.delenv("KAKAO_REST_API_KEY")
@@ -337,7 +338,7 @@ def test_default_factory_constructs_configured_models_classifier_and_actual_runn
         "langchain_openai": SimpleNamespace(ChatOpenAI=Model),
         "er_finder.web.provider": SimpleNamespace(LiveProvider=Provider),
     }
-    monkeypatch.setattr(live.importlib, "import_module", lambda name: modules[name])
+    monkeypatch.setattr(factory.importlib, "import_module", lambda name: modules[name])
     monkeypatch.setenv("ER_MAIN_MODEL", "configured-main")
     monkeypatch.setenv("ER_MAIN_REASONING_EFFORT", "low")
     monkeypatch.setenv("ER_MAIN_MAX_OUTPUT_TOKENS", "1234")
@@ -385,7 +386,7 @@ def test_default_factory_closes_resources_when_runner_construction_fails(live, m
         "langchain_openai": SimpleNamespace(ChatOpenAI=model),
         "er_finder.web.provider": SimpleNamespace(LiveProvider=Provider),
     }
-    monkeypatch.setattr(live.importlib, "import_module", lambda name: modules[name])
+    monkeypatch.setattr(factory.importlib, "import_module", lambda name: modules[name])
     backend = live.RunnerBackend()
     assert backend.connect().category == "contract"
     assert providers and providers[0].closed

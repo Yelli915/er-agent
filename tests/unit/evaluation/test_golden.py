@@ -8,7 +8,7 @@ scripts/eval_golden.py --live, not here.
 
 import pytest
 
-from er_finder import golden
+from er_finder.evaluation import golden
 from er_finder.guardrails.input_guard import assess_input
 
 KNOWN_RULE_UNDER_TRIAGE = {

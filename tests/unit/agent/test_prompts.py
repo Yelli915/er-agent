@@ -4,8 +4,8 @@
 프롬프트 텍스트나 스키마 중 한쪽만 바뀌었을 때 바로 잡아내기 위한 회귀 테스트다.
 """
 
-from er_finder.agent.prompts import CLASSIFIER_PROMPT, SYSTEM_PROMPT
 from er_finder.models import Condition, ERSearchReply
+from er_finder.prompts import CLASSIFIER_PROMPT, SYSTEM_PROMPT
 
 
 def test_system_prompt_contains_the_fixed_disclaimer_sentence():

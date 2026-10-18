@@ -9,8 +9,9 @@ Store에는 "동의한 기본 주소"와 "방문 기록"만 저장한다. curren
 
 from __future__ import annotations
 
+import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 
 from langgraph.store.base import BaseStore
@@ -126,5 +127,16 @@ class ERFinderStore:
         return ("er_finder", self._user_id, _NAMESPACE_VISITS)
 
 
+_clock_lock = threading.Lock()
+_last_stamp = datetime.min.replace(tzinfo=UTC)
+
+
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    """Strictly increasing timestamps, so records saved within one clock tick keep their order."""
+    global _last_stamp
+    with _clock_lock:
+        now = datetime.now(UTC)
+        if now <= _last_stamp:
+            now = _last_stamp + timedelta(microseconds=1)
+        _last_stamp = now
+    return now.isoformat()

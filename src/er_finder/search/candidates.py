@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
+from er_finder.guardrails.evidence import safe_data
 from er_finder.models import HospitalCandidate
-from er_finder.safety import safe_data
 
 
 def is_stale(timestamp: str | None, now: datetime) -> bool:

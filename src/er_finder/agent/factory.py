@@ -1,8 +1,11 @@
-"""Model construction shared by the web backend and the benchmark; never touches the network."""
+"""Model and runner construction shared by the web backend and the benchmark.
+
+Importing this module never touches the network; only the factories do."""
 
 from __future__ import annotations
 
 import importlib
+import os
 from typing import Any
 
 import httpx
@@ -32,3 +35,55 @@ def build_models(settings: Settings, http_client: httpx.Client) -> tuple[Any, An
         max_retries=0,
     )
     return model, InputClassifier(classifier_model)
+
+
+def default_runner_factory(**kwargs: Any) -> Any:
+    """Construct the real model, classifier and runner only after explicit connection."""
+    runner_module = importlib.import_module("er_finder.agent.runner")
+    factory_module = importlib.import_module("er_finder.agent.factory")
+    provider_module = importlib.import_module("er_finder.web.provider")
+    settings = Settings()
+    http_client = httpx.Client(timeout=settings.model_timeout)
+    provider = None
+    try:
+        provider = provider_module.LiveProvider(kakao_key=os.environ.get("KAKAO_REST_API_KEY", ""))
+        model, classifier = factory_module.build_models(settings, http_client)
+        runner = runner_module.ERFinder(
+            provider=provider, model=model, classifier=classifier, **kwargs
+        )
+        return ManagedRunner(runner, provider, http_client)
+    except Exception:
+        try:
+            if provider is not None:
+                provider.close()
+        finally:
+            http_client.close()
+        raise
+
+
+class ManagedRunner:
+    """Close only explicitly owned resources; leave SDK private clients untouched."""
+
+    def __init__(self, runner: Any, provider: Any, http_client: httpx.Client):
+        self._runner, self._provider, self._http_client = runner, provider, http_client
+
+    def chat(self, text: str, *, force_refresh: bool = False) -> Any:
+        return self._runner.chat(text, force_refresh=force_refresh)
+
+    def approve(self, approved: bool) -> Any:
+        return self._runner.approve(approved)
+
+    def end_session(self) -> None:
+        try:
+            self._runner.end_session()
+        finally:
+            self._provider.clear_cache()
+
+    def close(self) -> None:
+        try:
+            self.end_session()
+        finally:
+            try:
+                self._provider.close()
+            finally:
+                self._http_client.close()

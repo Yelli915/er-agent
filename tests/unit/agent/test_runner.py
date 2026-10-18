@@ -115,7 +115,7 @@ def test_selection_interrupt_approval_resume_writes_exactly_once(make_finder):
 
 
 def test_exact_candidate_selection_skips_classifier_but_other_input_still_uses_it(make_finder):
-    from er_finder.safety import assess_input
+    from er_finder.guardrails.input_guard import assess_input
 
     class CountingClassifier:
         calls = []
@@ -136,8 +136,8 @@ def test_exact_candidate_selection_skips_classifier_but_other_input_still_uses_i
 
 
 def test_selection_turn_does_not_repeat_previous_classifier_usage(make_finder):
-    from er_finder.agent.usage import ClassifierUsage
-    from er_finder.safety import assess_input
+    from er_finder.guardrails.input_guard import assess_input
+    from er_finder.usage import ClassifierUsage
 
     class MeteredClassifier:
         last_usage = ClassifierUsage()

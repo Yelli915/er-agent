@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from er_finder import benchmark  # noqa: E402
+from er_finder.evaluation import benchmark  # noqa: E402
 
 BLOCKED = (
     "BLOCKED: 실제 OpenAI·E-Gen을 호출하며 비용이 발생하므로 --live 없이는 실행하지 않습니다. "

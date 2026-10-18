@@ -7,10 +7,10 @@ from threading import RLock
 
 from langchain.agents import AgentState
 
+from er_finder.guardrails.pii import mask_pii
 from er_finder.memory.store import ERFinderStore
 from er_finder.memory.visit_plan import PendingVisitPlan, VisitPlanService, VisitPlanStatus
 from er_finder.models import ERSearchReply, HospitalCandidate
-from er_finder.safety import mask_pii
 
 
 class ERGraphState(AgentState[ERSearchReply], total=False):
