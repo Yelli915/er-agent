@@ -104,7 +104,7 @@ def test_report_preserves_pytest_exit_and_does_not_claim_integration(
         assert command[:3] == [sys.executable, "-m", "pytest"]
         assert command[command.index("-m", 3) + 1] == "not live"
         assert "scripts.verify" in command
-        assert "OPENAI_API_KEY" not in kwargs["env"]
+        assert "GEMINI_API_KEY" not in kwargs["env"]
         assert "ER_DEMO_MODE" not in kwargs["env"]
         targets = [part for part in command if part.startswith("tests/")]
         assert targets == (

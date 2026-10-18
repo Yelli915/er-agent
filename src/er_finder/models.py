@@ -8,6 +8,7 @@ EMERGENCY = "119에 즉시 신고하세요. 검색 결과를 기다리지 마세
 Severity = Literal["critical", "urgent", "standard"]
 Condition = Literal["심근경색", "뇌출혈", "뇌졸중", "중증외상", "화상", "분만"]
 Radius = Literal[3, 5, 10, 20, 30]
+RADII: Final = (3, 5, 10, 20, 30)
 
 
 class StrictModel(BaseModel):
@@ -61,12 +62,20 @@ class HospitalCandidate(StrictModel):
 class ERSearchReply(StrictModel):
     severity: Severity
     call_119_first: bool
-    search_radius_km: Radius
+    # A plain int in the schema: Gemini rejects integer enums, so RADII is enforced below.
+    search_radius_km: int = Field(description="검색 반경(km): 3, 5, 10, 20, 30 중 하나")
     hospitals: list[HospitalCandidate] = Field(max_length=3)
     no_candidate_reason: str | None = None
     data_timestamp: str
     next_action: str = Field(min_length=1, max_length=80)
     disclaimer: Literal["응급실 상황은 수시로 변하므로 방문 전 전화 확인을 권장합니다"]
+
+    @field_validator("search_radius_km")
+    @classmethod
+    def supported_radius(cls, value: int) -> int:
+        if value not in RADII:
+            raise ValueError(f"search_radius_km must be one of {RADII}")
+        return value
 
     @field_validator("data_timestamp")
     @classmethod

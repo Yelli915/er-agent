@@ -12,7 +12,7 @@
 
 모두 Pydantic 모델. 모델의 Structured Output 스키마이자 모듈 간 전달 타입이다.
 
-`TriageAssessment`는 분류 모델(gpt-4o-mini)의 출력이다.
+`TriageAssessment`는 분류 모델(gemini-3.5-flash-lite)의 출력이다.
 
 | 필드 | 타입 | 제약 |
 |---|---|---|
@@ -215,7 +215,7 @@ streamlit_app.py → web/app.py
 | `web/state.py`, `web/contracts.py` | 브라우저별 대화와 표시용 계약 |
 | `scripts/verify.py` | 오프라인 테스트 실행과 JSON/JUnit/로그 기록 |
 
-모델, 검색, 메모리, 가드레일의 오류는 해당 모듈에서 수정하며, 상담 어댑터는 실패를 표시하기만 한다. 좌표를 지정하면 주소 API를 건너뛰고, 기관 주소에서 얻은 시도와 시군구로 병상 및 중증 수용 API를 조회한다. 조회 실패와 정상적인 빈 응답을 구분하며, 실패한 조회는 같은 턴에서 반복하지 않는다. OpenAI와 E-Gen은 필수이고 카카오는 주소 검색을 쓸 때만 필요하다. `scripts/run_local.py`는 프로젝트의 `.env`를 우선 적용하고, 일반 factory와 `streamlit run`은 기존 환경변수를 그대로 사용한다.
+모델, 검색, 메모리, 가드레일의 오류는 해당 모듈에서 수정하며, 상담 어댑터는 실패를 표시하기만 한다. 좌표를 지정하면 주소 API를 건너뛰고, 기관 주소에서 얻은 시도와 시군구로 병상 및 중증 수용 API를 조회한다. 조회 실패와 정상적인 빈 응답을 구분하며, 실패한 조회는 같은 턴에서 반복하지 않는다. Gemini와 E-Gen은 필수이고 카카오는 주소 검색을 쓸 때만 필요하다. `scripts/run_local.py`는 프로젝트의 `.env`를 우선 적용하고, 일반 factory와 `streamlit run`은 기존 환경변수를 그대로 사용한다.
 
 ### C.4 확인해야 할 사용자 흐름
 

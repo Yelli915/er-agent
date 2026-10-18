@@ -5,6 +5,7 @@ from typing import Any
 
 import streamlit as st
 
+from er_finder.demo import DEMO_NOTICE, is_demo
 from er_finder.guardrails.input_guard import assess_input
 from er_finder.models import EMERGENCY
 from er_finder.web.api_view import render_api_view
@@ -17,7 +18,7 @@ DEFAULT_LONGITUDE = 127.027621
 NOTICE_KEY, ERROR_KEY = "ui_notice", "ui_error"
 TRANSPORT_LABELS = {"car": "자동차", "walk": "도보", "transit": "대중교통"}
 KEY_LABELS = {
-    "OPENAI_API_KEY": "OpenAI · 대화와 분류",
+    "GEMINI_API_KEY": "Gemini · 대화와 분류",
     "KAKAO_REST_API_KEY": "카카오 · 위치 검색",
     "EGEN_SERVICE_KEY": "E-Gen · 응급의료 정보",
 }
@@ -249,7 +250,7 @@ def _connection_view(web: WebSession) -> None:
             "**에이전트 연결 확인**을 눌러주세요. `.env.example`에는 실제 키를 넣지 않습니다."
         )
         st.code(
-            "OPENAI_API_KEY=...\nKAKAO_REST_API_KEY=...\nEGEN_SERVICE_KEY=...", language="dotenv"
+            "GEMINI_API_KEY=...\nKAKAO_REST_API_KEY=...\nEGEN_SERVICE_KEY=...", language="dotenv"
         )
     st.markdown("**기능별 연결**")
     st.markdown(
@@ -334,6 +335,8 @@ def main() -> None:
     web: WebSession = st.session_state["web"]
     _sidebar(web)
     render_header()
+    if is_demo():
+        st.warning(DEMO_NOTICE + " ‘의료기관 조회’ 탭은 실제 E-Gen 키가 필요합니다.")
     if st.session_state.get(ERROR_KEY):
         st.error(st.session_state[ERROR_KEY])
     elif st.session_state.get(NOTICE_KEY):

@@ -12,6 +12,7 @@ from langgraph.store.memory import InMemoryStore
 
 from er_finder.agent.factory import default_runner_factory
 from er_finder.config import AGENT_REQUIRED_KEYS, REQUIRED_KEYS, credential_status, load_environment
+from er_finder.demo import demo_runner_factory, is_demo
 from er_finder.memory.store import ERFinderStore
 from er_finder.memory.visit_plan import PendingVisitPlan
 from er_finder.web.contracts import UIReply, WebResult
@@ -61,7 +62,9 @@ class RunnerBackend:
         self.user_id = user_id or str(uuid4())
         self._store = store if store is not None else InMemoryStore()
         self.profile = ERFinderStore(self._store, self.user_id)
-        self._factory = runner_factory or default_runner_factory
+        self._factory = runner_factory or (
+            demo_runner_factory if is_demo() else default_runner_factory
+        )
         self._runner: Any = None
         self._transport = "car"
         self._category = "not_connected"
@@ -91,7 +94,7 @@ class RunnerBackend:
             self._invalidate("contract")
             return self.status()
         checks = credential_status()
-        if not all(checks.get(key, False) for key in AGENT_REQUIRED_KEYS):
+        if not is_demo() and not all(checks.get(key, False) for key in AGENT_REQUIRED_KEYS):
             self._invalidate("keys")
             return self.status()
         if self._runner is not None and transport == self._transport:

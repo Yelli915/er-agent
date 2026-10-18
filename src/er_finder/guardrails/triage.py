@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from er_finder.guardrails.input_guard import InputAssessment, assess_input
+from er_finder.guardrails.input_guard import CALL_119_NOTICE, InputAssessment, assess_input
 from er_finder.guardrails.pii import mask_pii
 from er_finder.models import Condition, TriageAssessment
 from er_finder.prompts import CLASSIFIER_PROMPT
@@ -65,6 +65,8 @@ class InputClassifier:
                 result.reason = (
                     "서비스 규칙 변경 요청은 처리할 수 없습니다. 위치와 증상을 알려주세요."
                 )
+                if result.triage.severity == "critical":
+                    result.reason = f"{result.reason} {CALL_119_NOTICE}"
         except Exception:
             # No exception body is logged: SDK errors can contain request data or keys.
             if result.suspicious:

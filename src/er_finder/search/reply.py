@@ -34,9 +34,10 @@ class ReplyBuilder:
         self.session = session
         self.planner = planner
 
-    def make_reply(self) -> ERSearchReply:
+    def make_reply(self, *, refresh: bool = True) -> ERSearchReply:
         s = self.session
-        self.planner.refresh_candidates()
+        if refresh:
+            self.planner.refresh_candidates()
         reason: str | None = None
         action = ACTION_CALL_HOSPITAL
         if s.assessment.blocked:
@@ -55,20 +56,17 @@ class ReplyBuilder:
             reason = REASON_NO_LOCATION
             action = ACTION_NO_LOCATION
         elif not s.candidates:
-            if s.triage.condition == "중증외상" and any(
+            unconfirmed = any(
                 b.get("er_beds_available", 0)
                 and s.acceptance.get(hpid, {}).get("acceptable") is None
                 for hpid, b in s.beds.items()
-            ):
+            )
+            if s.triage.condition == "중증외상" and unconfirmed:
                 reason = REASON_TRAUMA_UNCONFIRMED
                 action = ACTION_TRAUMA_CALL_119
             else:
                 reason = no_candidate_in_radius(s.radius)
-                if s.triage.condition and any(
-                    b.get("er_beds_available", 0)
-                    and s.acceptance.get(hpid, {}).get("acceptable") is None
-                    for hpid, b in s.beds.items()
-                ):
+                if s.triage.condition and unconfirmed:
                     reason += REASON_SEVERE_UNCONFIRMED_SUFFIX
                 action = ACTION_NO_CANDIDATE_CALL_119
         if s.specialty_requested and s.candidates:

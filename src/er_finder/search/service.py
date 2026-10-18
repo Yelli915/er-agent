@@ -88,8 +88,8 @@ class SearchSession:
     def regions(self) -> list[dict[str, str]]:
         return self._planner.regions()
 
-    def make_reply(self) -> ERSearchReply:
-        return self._replies.make_reply()
+    def make_reply(self, *, refresh: bool = True) -> ERSearchReply:
+        return self._replies.make_reply(refresh=refresh)
 
     def check_evidence(self, proposal: Any) -> ERSearchReply:
         return self._replies.check_evidence(proposal)
@@ -133,9 +133,12 @@ class SearchSession:
             self.beds_ready.set()
 
     def status(self) -> dict[str, Any]:
+        # next_calls() already refreshes candidates when it reaches that stage; reuse that pass.
+        self._planner.refreshed = False
+        calls = self.next_calls()
         return {
-            "next_calls": self.next_calls(),
-            "draft": self.make_reply().model_dump(),
+            "next_calls": calls,
+            "draft": self.make_reply(refresh=not self._planner.refreshed).model_dump(),
             "demo": bool(getattr(self.provider, "is_demo", False)),
         }
 
@@ -199,17 +202,18 @@ class SearchSession:
         self._require("get_er_bed_status", dict(regions=regions, hpids=hpids))
         self.audit.append({"name": "get_er_bed_status", "region_count": len(regions)})
 
+        ids_by_region: dict[tuple[Any, Any], list[str]] = {}
+        for h in hpids:
+            fac = self.facilities[h]
+            ids_by_region.setdefault((fac.get("sido"), fac.get("sigungu")), []).append(h)
+
         def fetch(region: dict[str, str]) -> list[dict[str, Any]]:
-            ids = [
-                h
-                for h in hpids
-                if (self.facilities[h].get("sido"), self.facilities[h].get("sigungu"))
-                == (region["sido"], region["sigungu"])
-            ]
+            ids = ids_by_region.get((region["sido"], region["sigungu"]), [])
+            id_set = set(ids)
             rows = self.provider.get_er_bed_status(
                 region["sido"], region["sigungu"], ids, force_refresh=self.force_refresh
             )
-            return [r for r in rows if r.get("hpid") in ids]
+            return [r for r in rows if r.get("hpid") in id_set]
 
         try:
             with ThreadPoolExecutor(max_workers=min(8, max(1, len(regions)))) as pool:

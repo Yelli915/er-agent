@@ -1,6 +1,5 @@
 """One real end-to-end turn: model tool schemas, classifier, E-Gen and the call budget."""
 
-import httpx
 import pytest
 
 from er_finder.evaluation.benchmark import LOCATION
@@ -9,18 +8,17 @@ pytestmark = pytest.mark.live
 
 
 @pytest.fixture
-def finder(egen, openai_key):
+def finder(egen, gemini_key):
     from er_finder.agent.factory import build_models
     from er_finder.agent.runner import ERFinder
     from er_finder.config import Settings
     from er_finder.web.provider import LiveProvider
 
     settings = Settings()
-    with httpx.Client(timeout=settings.model_timeout) as http_client:
-        model, classifier = build_models(settings, http_client)
-        runner = ERFinder(provider=LiveProvider(kakao_key=""), model=model, classifier=classifier)
-        yield runner
-        runner.close()
+    model, classifier = build_models(settings)
+    runner = ERFinder(provider=LiveProvider(kakao_key=""), model=model, classifier=classifier)
+    yield runner
+    runner.close()
 
 
 def test_classifier_reports_usage_and_a_valid_label(finder):

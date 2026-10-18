@@ -16,7 +16,7 @@ def live(monkeypatch):
     assert importlib.util.find_spec("er_finder.web.live") is not None, "live adapter is missing"
     module = importlib.import_module("er_finder.web.live")
     monkeypatch.setattr(config, "load_dotenv", lambda **kwargs: False)
-    for name in ("OPENAI_API_KEY", "KAKAO_REST_API_KEY", "EGEN_SERVICE_KEY"):
+    for name in ("GEMINI_API_KEY", "KAKAO_REST_API_KEY", "EGEN_SERVICE_KEY"):
         monkeypatch.setenv(name, "offline-test-value")
     return module
 
@@ -107,12 +107,12 @@ def test_status_checks_keys_without_importing_or_constructing_runner(live, monke
     def forbidden(**kwargs):
         pytest.fail("status must not construct the agent")
 
-    monkeypatch.setenv("OPENAI_API_KEY", " ")
+    monkeypatch.setenv("GEMINI_API_KEY", " ")
     backend = live.RunnerBackend(runner_factory=forbidden)
     status = backend.status()
     assert not status.connected
     assert status.checks == {
-        "OPENAI_API_KEY": False,
+        "GEMINI_API_KEY": False,
         "KAKAO_REST_API_KEY": True,
         "EGEN_SERVICE_KEY": True,
     }
@@ -125,12 +125,12 @@ def test_dotenv_respects_existing_environment(live, tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "load_dotenv", load_dotenv)
     path = tmp_path / ".env"
-    path.write_text("OPENAI_API_KEY=file-value\nKAKAO_REST_API_KEY=file-kakao\n", encoding="utf-8")
+    path.write_text("GEMINI_API_KEY=file-value\nKAKAO_REST_API_KEY=file-kakao\n", encoding="utf-8")
     monkeypatch.delenv("KAKAO_REST_API_KEY")
     live.load_environment(path)
     import os
 
-    assert os.environ["OPENAI_API_KEY"] == "offline-test-value"
+    assert os.environ["GEMINI_API_KEY"] == "offline-test-value"
     assert os.environ["KAKAO_REST_API_KEY"] == "file-kakao"
 
 
@@ -335,12 +335,12 @@ def test_default_factory_constructs_configured_models_classifier_and_actual_runn
         "er_finder.agent.runner": SimpleNamespace(ERFinder=runner),
         "er_finder.agent.factory": factory,
         "er_finder.guardrails.triage": SimpleNamespace(InputClassifier=lambda model: model),
-        "langchain_openai": SimpleNamespace(ChatOpenAI=Model),
+        "langchain_google_genai": SimpleNamespace(ChatGoogleGenerativeAI=Model),
         "er_finder.web.provider": SimpleNamespace(LiveProvider=Provider),
     }
     monkeypatch.setattr(factory.importlib, "import_module", lambda name: modules[name])
     monkeypatch.setenv("ER_MAIN_MODEL", "configured-main")
-    monkeypatch.setenv("ER_MAIN_REASONING_EFFORT", "low")
+    monkeypatch.setenv("ER_MAIN_THINKING_BUDGET", "0")
     monkeypatch.setenv("ER_MAIN_MAX_OUTPUT_TOKENS", "1234")
     monkeypatch.setenv("ER_CLASSIFIER_MODEL", "configured-classifier")
     monkeypatch.setenv("ER_CLASSIFIER_TEMPERATURE", "0")
@@ -348,16 +348,15 @@ def test_default_factory_constructs_configured_models_classifier_and_actual_runn
     backend = live.RunnerBackend()
     assert backend.connect(transport="walk").connected
     assert [model["model"] for model in models] == ["configured-main", "configured-classifier"]
-    assert models[0]["max_tokens"] == 1234 and "temperature" not in models[0]
-    assert models[1]["max_tokens"] == 120 and models[1]["temperature"] == 0
+    assert models[0]["max_output_tokens"] == 1234 and "temperature" not in models[0]
+    assert models[0]["thinking_budget"] == 0
+    assert models[1]["max_output_tokens"] == 120 and models[1]["temperature"] == 0
     assert arguments[0]["provider"] is providers[0]
     assert arguments[0]["transport"] == "walk"
     backend.profile.set_home_address("서울", consent=True)
     assert ERFinderStore(arguments[0]["store"], backend.user_id).get_home_address() == "서울"
-    owned_http = models[0]["http_client"]
-    assert owned_http is models[1]["http_client"] and not owned_http.is_closed
     assert backend.connect(transport="car").connected
-    assert providers[0].closed and owned_http.is_closed
+    assert providers[0].closed
 
 
 def test_default_factory_closes_resources_when_runner_construction_fails(live, monkeypatch):
@@ -383,11 +382,10 @@ def test_default_factory_closes_resources_when_runner_construction_fails(live, m
         "er_finder.agent.runner": SimpleNamespace(ERFinder=broken_runner),
         "er_finder.agent.factory": factory,
         "er_finder.guardrails.triage": SimpleNamespace(InputClassifier=lambda model: model),
-        "langchain_openai": SimpleNamespace(ChatOpenAI=model),
+        "langchain_google_genai": SimpleNamespace(ChatGoogleGenerativeAI=model),
         "er_finder.web.provider": SimpleNamespace(LiveProvider=Provider),
     }
     monkeypatch.setattr(factory.importlib, "import_module", lambda name: modules[name])
     backend = live.RunnerBackend()
     assert backend.connect().category == "contract"
     assert providers and providers[0].closed
-    assert models[0]["http_client"].is_closed

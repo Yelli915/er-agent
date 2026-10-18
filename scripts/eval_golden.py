@@ -42,19 +42,16 @@ def main(argv: list[str] | None = None) -> int:
         from er_finder.web.live import credential_status
 
         credential_status()
-        if not os.environ.get("OPENAI_API_KEY", "").strip():
-            print("BLOCKED: OPENAI_API_KEY 가 설정되지 않았습니다.", file=sys.stderr)
+        if not os.environ.get("GEMINI_API_KEY", "").strip():
+            print("BLOCKED: GEMINI_API_KEY 가 설정되지 않았습니다.", file=sys.stderr)
             return 2
-        import httpx
-
         from er_finder.agent.factory import build_models
         from er_finder.config import Settings
 
         settings = Settings()
-        with httpx.Client(timeout=settings.model_timeout) as client:
-            _, classifier = build_models(settings, client)
-            reports["rules+classifier"] = golden.evaluate(classifier.assess, cases)
-            reports["rules+classifier"]["classifier_model"] = settings.classifier_model
+        _, classifier = build_models(settings)
+        reports["rules+classifier"] = golden.evaluate(classifier.assess, cases)
+        reports["rules+classifier"]["classifier_model"] = settings.classifier_model
         _print("rules+classifier", reports["rules+classifier"])
     if args.output:
         out = Path(args.output)

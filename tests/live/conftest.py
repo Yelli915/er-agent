@@ -32,7 +32,7 @@ def egen():
 
 
 @pytest.fixture(scope="session")
-def openai_key():
+def gemini_key():
     load_environment()
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
-        pytest.fail("OPENAI_API_KEY 가 설정되지 않았습니다. 조용히 건너뛰지 않습니다.")
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        pytest.fail("GEMINI_API_KEY 가 설정되지 않았습니다. 조용히 건너뛰지 않습니다.")

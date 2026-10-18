@@ -1,6 +1,6 @@
 """Repeated live benchmark (opt-in) and comparison of saved results.
 
-Live runs call OpenAI and E-Gen and cost money, so nothing runs without --live.
+Live runs call Gemini and E-Gen and cost money, so nothing runs without --live.
     python scripts/benchmark.py --live --runs 20 --output docs/benchmarks/baseline.json
     python scripts/benchmark.py --compare \
         docs/benchmarks/baseline.json docs/benchmarks/after.json
@@ -24,11 +24,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from er_finder.evaluation import benchmark  # noqa: E402
 
 BLOCKED = (
-    "BLOCKED: 실제 OpenAI·E-Gen을 호출하며 비용이 발생하므로 --live 없이는 실행하지 않습니다. "
+    "BLOCKED: 실제 Gemini·E-Gen을 호출하며 비용이 발생하므로 --live 없이는 실행하지 않습니다. "
     "P50/P90 지연, 모델 호출 수, 토큰, 비용은 python scripts/benchmark.py --live --runs 20 으로 "
     "측정하고, 오프라인 확인은 python scripts/verify.py 를 사용하세요."
 )
-REQUIRED_KEYS = ("OPENAI_API_KEY", "EGEN_SERVICE_KEY")
+REQUIRED_KEYS = ("GEMINI_API_KEY", "EGEN_SERVICE_KEY")
 
 
 def _commit() -> str:
@@ -101,7 +101,7 @@ def run_live(args) -> int:
             "runs_per_scenario": args.runs,
             "python": platform.python_version(),
             "main_model": settings.main_model,
-            "reasoning_effort": settings.main_reasoning_effort,
+            "thinking_budget": settings.main_thinking_budget,
             "classifier_model": settings.classifier_model,
             "server_planned_calls": not args.no_server_planned,
             "prices_usd_per_million": asdict(prices) if prices else None,

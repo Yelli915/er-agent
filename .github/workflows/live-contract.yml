@@ -1,6 +1,6 @@
 name: Live contract check
 
-# Calls the real E-Gen and OpenAI APIs (small cost) to catch upstream schema drift that the
+# Calls the real E-Gen and Gemini APIs (small cost) to catch upstream schema drift that the
 # offline suite cannot see. Never runs on pull requests, so secrets are not exposed to forks.
 on:
   schedule:
@@ -22,13 +22,13 @@ jobs:
     timeout-minutes: 15
     env:
       ER_RUN_LIVE: "1"
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       EGEN_SERVICE_KEY: ${{ secrets.EGEN_SERVICE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Require secrets (a missing secret must fail, not skip)
         run: |
-          for name in OPENAI_API_KEY EGEN_SERVICE_KEY; do
+          for name in GEMINI_API_KEY EGEN_SERVICE_KEY; do
             if [ -z "${!name}" ]; then echo "::error::secret $name is not configured"; exit 1; fi
           done
       - uses: actions/setup-python@v5
@@ -57,5 +57,5 @@ jobs:
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "Failed again: $url"
           else
-            gh issue create --title "$title" --body "E-Gen/OpenAI 실제 응답 계약 점검이 실패했습니다: $url"
+            gh issue create --title "$title" --body "E-Gen/Gemini 실제 응답 계약 점검이 실패했습니다: $url"
           fi

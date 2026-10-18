@@ -11,13 +11,11 @@ import pytest
 from er_finder.evaluation import golden
 from er_finder.guardrails.input_guard import assess_input
 
-# crit-/urg-/std-01~22 and blk-01~07 were used to tune the rules; the later ids (crit-23+,
-# urg-09+, std-22+, blk-08+) were written afterwards and are the held-out gaps listed here.
-KNOWN_RULE_UNDER_TRIAGE = {
-    "crit-27", "crit-28", "crit-30", "urg-09", "urg-11", "urg-13", "urg-14",
-}  # fmt: skip
-KNOWN_RULE_WRONG_CONDITION = {"crit-25", "crit-30", "urg-13", "urg-14"}
-KNOWN_RULE_MISSED_BLOCKS = {"blk-08"}
+# Every labeled case is now handled by the rules. Add an id here only for a sentence the
+# keyword matcher is known to miss; test_known_gaps_are_removed_once_fixed keeps it honest.
+KNOWN_RULE_UNDER_TRIAGE: set[str] = set()
+KNOWN_RULE_WRONG_CONDITION: set[str] = set()
+KNOWN_RULE_MISSED_BLOCKS: set[str] = set()
 
 
 @pytest.fixture(scope="module")

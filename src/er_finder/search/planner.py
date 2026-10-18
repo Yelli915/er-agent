@@ -18,6 +18,7 @@ class CallPlanner:
 
     def __init__(self, session: "SearchSession") -> None:
         self.session = session
+        self.refreshed = False
 
     def regions(self) -> list[dict[str, str]]:
         s = self.session
@@ -34,6 +35,7 @@ class CallPlanner:
 
     def refresh_candidates(self) -> list[HospitalCandidate]:
         s = self.session
+        self.refreshed = True
         if s.lookup_error:
             s.candidates = []
             return s.candidates
@@ -68,15 +70,14 @@ class CallPlanner:
                     },
                 }
             ]
+        regions = self.regions()
+        new_regions = [r for r in regions if (r["sido"], r["sigungu"]) not in s.severe_region_cache]
         if not s.beds_checked:
             calls = [
                 {
                     "name": "get_er_bed_status",
-                    "args": {"regions": self.regions(), "hpids": sorted(s.facilities)},
+                    "args": {"regions": regions, "hpids": sorted(s.facilities)},
                 }
-            ]
-            new_regions = [
-                r for r in self.regions() if (r["sido"], r["sigungu"]) not in s.severe_region_cache
             ]
             if s.triage.condition and new_regions:
                 calls.append(
@@ -95,11 +96,7 @@ class CallPlanner:
                 {
                     "name": "get_severe_acceptance",
                     "args": {
-                        "regions": [
-                            r
-                            for r in self.regions()
-                            if (r["sido"], r["sigungu"]) not in s.severe_region_cache
-                        ],
+                        "regions": new_regions,
                         "condition": s.triage.condition,
                     },
                 }

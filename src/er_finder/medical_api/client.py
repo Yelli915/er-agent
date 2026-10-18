@@ -236,9 +236,10 @@ def get_er_bed_status(
         else:
             cache.save(bed_cache, key, rows)
 
+    wanted = set(hpids)
     result = []
     for row in rows:
-        if row["hpid"] in hpids:
+        if row["hpid"] in wanted:
             stale = lookup_failed or _is_stale(row["beds_updated_at"])
             result.append(
                 {

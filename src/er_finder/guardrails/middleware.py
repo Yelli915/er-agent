@@ -13,7 +13,10 @@ from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
 
 from er_finder.guardrails.evidence import sanitize_prose
+from er_finder.models import ERSearchReply
 from er_finder.prompts import SYSTEM_PROMPT
+
+NEXT_ACTION_MAX_LENGTH = 80
 
 
 def EmergencyInputGuard(session: Any) -> Any:
@@ -83,10 +86,13 @@ def EvidenceCheckMiddleware(session: Any) -> Any:
     def evidence_check(state: Any, runtime: Any) -> dict[str, Any]:
         reply = session.check_evidence(state.get("structured_response"))
         if reply is not None:
-            updates: dict[str, Any] = {"next_action": sanitize_prose(reply.next_action)}
+            updates: dict[str, Any] = {
+                "next_action": sanitize_prose(reply.next_action, limit=NEXT_ACTION_MAX_LENGTH)
+            }
             if reply.no_candidate_reason:
                 updates["no_candidate_reason"] = sanitize_prose(reply.no_candidate_reason)
-            reply = reply.model_copy(update=updates)
+            # model_copy skips validation; re-validate so the edited prose keeps the contract.
+            reply = ERSearchReply.model_validate({**reply.model_dump(), **updates})
         return {
             "structured_response": reply,
             **session.snapshot(),
