@@ -72,7 +72,7 @@
 | 수단 | 명령 | 용도 |
 |---|---|---|
 | 위급도 골든셋 | `python scripts/eval_golden.py [--live]` | 과소 분류, 과대 분류, 차단 누락을 측정한다 (`tests/fixtures/golden/triage.json`). |
-| 실제 API 계약 점검 | `ER_RUN_LIVE=1 pytest tests/live -m live` | E-Gen과 Gemini의 응답 형식 변경을 감지한다. `live-contract.yml`이 매일 실행한다. |
+| 실제 API 계약 점검 | `ER_RUN_LIVE=1 pytest tests/live -m live` | E-Gen과 Gemini의 응답 형식 변경을 감지한다. `live-contract.yml`이 매일 E-Gen만 실행하고, Gemini는 수동 실행에서 `gemini`를 켰을 때만 돈다. |
 | 지연·비용 벤치마크 | `python scripts/benchmark.py --live` | 4절에서 설명한다. |
 
 ## 2. 검증 계획

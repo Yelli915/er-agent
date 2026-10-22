@@ -46,7 +46,7 @@ class InputClassifier:
             or (result.triage.severity == "critical" and not result.suspicious)
         ):
             return result
-        usage, started = RunUsage(), perf_counter()
+        usage, started, error_type = RunUsage(), perf_counter(), None
         try:
             output = self.model.with_structured_output(ClassifierOutput).invoke(
                 [("system", CLASSIFIER_PROMPT), ("human", masked)],
@@ -67,8 +67,9 @@ class InputClassifier:
                 )
                 if result.triage.severity == "critical":
                     result.reason = f"{result.reason} {CALL_119_NOTICE}"
-        except Exception:
+        except Exception as error:
             # No exception body is logged: SDK errors can contain request data or keys.
+            error_type = type(error).__name__
             if result.suspicious:
                 result.blocked = True
                 result.reason = "입력 안전성을 확인하지 못했습니다. 위치와 증상만 다시 알려주세요."
@@ -77,6 +78,7 @@ class InputClassifier:
                 calls=1,
                 elapsed_seconds=max(0.0, perf_counter() - started),
                 tokens_complete=usage.known_responses == usage.responses > 0,
+                error_type=error_type,
                 **(usage.tokens if usage.known_responses else {}),
             )
         return result

@@ -40,3 +40,5 @@ class ClassifierUsage:
     output_tokens: int | None = None
     total_tokens: int | None = None
     tokens_complete: bool = True
+    # Exception class name only (e.g. a rate-limit error), so a swallowed failure is visible.
+    error_type: str | None = None

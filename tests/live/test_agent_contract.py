@@ -25,8 +25,11 @@ def test_classifier_reports_usage_and_a_valid_label(finder):
     classifier = finder.classifier
     result = classifier.assess("발목을 삐어서 부었어요")
     assert result.triage.severity in {"standard", "urgent", "critical"}
-    assert classifier.last_usage.calls == 1
-    assert classifier.last_usage.tokens_complete and classifier.last_usage.input_tokens > 0
+    usage = classifier.last_usage
+    assert usage.calls == 1
+    # A swallowed model error (e.g. quota) leaves no tokens; name it instead of blaming parsing.
+    assert usage.error_type is None, f"분류 모델 호출 실패: {usage.error_type}"
+    assert usage.tokens_complete and usage.input_tokens > 0, f"토큰 메타데이터 누락: {usage}"
 
 
 def test_standard_search_succeeds_within_the_call_budget(finder):

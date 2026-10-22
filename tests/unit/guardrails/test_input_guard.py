@@ -104,6 +104,7 @@ def test_classifier_counts_a_failed_model_call():
     classifier = InputClassifier(SimpleNamespace(with_structured_output=bind))
     classifier.assess("발목이 아파요")
     assert classifier.last_usage.calls == 1 and not classifier.last_usage.tokens_complete
+    assert classifier.last_usage.error_type == "RuntimeError"
 
 
 def _model_returning(**fields):

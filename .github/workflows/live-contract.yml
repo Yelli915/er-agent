@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: "17 21 * * *" # 06:17 KST
   workflow_dispatch:
+    inputs:
+      gemini:
+        description: "Gemini 계약 테스트도 실행 (할당량 소모)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,13 +27,17 @@ jobs:
     timeout-minutes: 15
     env:
       ER_RUN_LIVE: "1"
+      # Gemini runs only on a manual dispatch that asks for it; the nightly run is E-Gen only.
+      RUN_GEMINI: ${{ inputs.gemini == true }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       EGEN_SERVICE_KEY: ${{ secrets.EGEN_SERVICE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Require secrets (a missing secret must fail, not skip)
         run: |
-          for name in GEMINI_API_KEY EGEN_SERVICE_KEY; do
+          names=EGEN_SERVICE_KEY
+          [ "$RUN_GEMINI" = true ] && names="$names GEMINI_API_KEY"
+          for name in $names; do
             if [ -z "${!name}" ]; then echo "::error::secret $name is not configured"; exit 1; fi
           done
       - uses: actions/setup-python@v5
@@ -38,7 +47,10 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -e '.[dev]'
       - name: Run live contract tests
-        run: python -m pytest tests/live -m live --no-cov -p no:cacheprovider --junitxml=live-results/junit.xml
+        run: |
+          target=tests/live/test_egen_contract.py
+          [ "$RUN_GEMINI" = true ] && target=tests/live
+          python -m pytest $target -m live --no-cov -p no:cacheprovider --junitxml=live-results/junit.xml
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
