@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
+from er_finder.freshness import is_stale
 from er_finder.guardrails.evidence import sanitize_prose
 from er_finder.messages import (
     ACTION_BLOCKED,
@@ -13,6 +14,7 @@ from er_finder.messages import (
     ACTION_NO_LOCATION,
     ACTION_SPECIALTY,
     ACTION_TRAUMA_CALL_119,
+    FAILURE_MESSAGES,
     REASON_BLOCKED,
     REASON_GREETING,
     REASON_NO_LOCATION,
@@ -23,39 +25,36 @@ from er_finder.messages import (
 from er_finder.models import DISCLAIMER, ERSearchReply
 
 if TYPE_CHECKING:
-    from er_finder.search.planner import CallPlanner
     from er_finder.search.service import SearchSession
 
 
 class ReplyBuilder:
-    """Builds the source-derived reply from a SearchSession and its call planner."""
+    """Builds a detached reply without changing the verified search state."""
 
-    def __init__(self, session: "SearchSession", planner: "CallPlanner") -> None:
+    def __init__(self, session: "SearchSession") -> None:
         self.session = session
-        self.planner = planner
 
-    def make_reply(self, *, refresh: bool = True) -> ERSearchReply:
+    def make_reply(self) -> ERSearchReply:
         s = self.session
-        if refresh:
-            self.planner.refresh_candidates()
+        candidates = s.candidates
         reason: str | None = None
         action = ACTION_CALL_HOSPITAL
         if s.assessment.blocked:
-            s.candidates = []
+            candidates = []
             reason = REASON_BLOCKED
             action = ACTION_BLOCKED
         elif s.assessment.greeting:
-            s.candidates = []
+            candidates = []
             reason = REASON_GREETING
             action = ACTION_GREETING
-        elif s.lookup_error:
-            s.candidates = []
-            reason = s.lookup_error
+        elif s.failure:
+            candidates = []
+            reason = FAILURE_MESSAGES[s.failure["failure_category"]]
             action = ACTION_LOOKUP_FAILED
         elif not s.location:
             reason = REASON_NO_LOCATION
             action = ACTION_NO_LOCATION
-        elif not s.candidates:
+        elif not candidates:
             unconfirmed = any(
                 b.get("er_beds_available", 0)
                 and s.acceptance.get(hpid, {}).get("acceptable") is None
@@ -69,15 +68,25 @@ class ReplyBuilder:
                 if s.triage.condition and unconfirmed:
                     reason += REASON_SEVERE_UNCONFIRMED_SUFFIX
                 action = ACTION_NO_CANDIDATE_CALL_119
-        if s.specialty_requested and s.candidates:
+        if s.specialty_requested and candidates:
             action = ACTION_SPECIALTY
         if s.triage.severity == "critical":
             action = ACTION_CRITICAL
+        now = s.now()
         return ERSearchReply(
             severity=s.triage.severity,
             call_119_first=s.triage.severity == "critical",
             search_radius_km=s.radius,
-            hospitals=s.candidates,
+            hospitals=[
+                candidate.model_copy(
+                    deep=True,
+                    update={
+                        "is_stale": is_stale(candidate.beds_updated_at, now)
+                        or bool(s.beds.get(candidate.hpid, {}).get("is_stale", False))
+                    },
+                )
+                for candidate in candidates
+            ],
             no_candidate_reason=reason,
             data_timestamp=s.data_timestamp,
             next_action=action,

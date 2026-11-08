@@ -24,11 +24,3 @@ def test_get_expired_returns_none():
     value, _ = store["키"]
     store["키"] = (value, 0)  # 아주 오래전(유닉스 시각 0)에 저장된 것처럼 만든다
     assert cache.get(store, "키") is None
-
-
-def test_make_stale_adds_flag_without_changing_original():
-    rows = [{"hpid": "A1"}, {"hpid": "A2"}]
-    result = cache.make_stale(rows)
-
-    assert all(row["stale"] is True for row in result)
-    assert "stale" not in rows[0]  # 원본은 그대로여야 한다

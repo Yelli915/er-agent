@@ -8,7 +8,7 @@ from threading import RLock
 from typing import Any
 
 from er_finder.medical_api.cache import make_key
-from er_finder.medical_api.parser import normalize_sido
+from er_finder.regions import normalize_sido
 from er_finder.search.coordinates import parse_coordinates
 
 

@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING, Any
 from er_finder.messages import (
     TOOL_ORDER_MISMATCH,
 )
-from er_finder.models import HospitalCandidate
-from er_finder.search.candidates import select_candidates
+from er_finder.search.contracts import PlannedCall, Region
 from er_finder.search.errors import ToolOrderError
 
 if TYPE_CHECKING:
@@ -18,9 +17,8 @@ class CallPlanner:
 
     def __init__(self, session: "SearchSession") -> None:
         self.session = session
-        self.refreshed = False
 
-    def regions(self) -> list[dict[str, str]]:
+    def regions(self) -> list[Region]:
         s = self.session
         return [
             dict(sido=sido, sigungu=sigungu)
@@ -33,25 +31,9 @@ class CallPlanner:
             )
         ]
 
-    def refresh_candidates(self) -> list[HospitalCandidate]:
+    def next_calls(self) -> list[PlannedCall]:
         s = self.session
-        self.refreshed = True
-        if s.lookup_error:
-            s.candidates = []
-            return s.candidates
-        s.candidates = select_candidates(
-            s.facilities,
-            s.beds,
-            s.acceptance,
-            s.details,
-            s.triage.condition,
-            s.now(),
-        )
-        return s.candidates
-
-    def next_calls(self) -> list[dict[str, Any]]:
-        s = self.session
-        if s.lookup_error:
+        if s.failure:
             return []
         if s.assessment.blocked or s.assessment.greeting:
             return []
@@ -73,7 +55,7 @@ class CallPlanner:
         regions = self.regions()
         new_regions = [r for r in regions if (r["sido"], r["sigungu"]) not in s.severe_region_cache]
         if not s.beds_checked:
-            calls = [
+            calls: list[PlannedCall] = [
                 {
                     "name": "get_er_bed_status",
                     "args": {"regions": regions, "hpids": sorted(s.facilities)},
@@ -101,7 +83,7 @@ class CallPlanner:
                     },
                 }
             ]
-        candidates = self.refresh_candidates()
+        candidates = s.candidates
         if not candidates and s.radius_index < len(s.radii) - 1:
             return [
                 {

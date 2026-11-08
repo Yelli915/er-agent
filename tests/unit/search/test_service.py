@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from tests.unit.search.provider_fixture import OfflineSearchProvider
 
+from er_finder.errors import error_metadata
 from er_finder.search import SearchSession, ToolOrderError
 
 
@@ -188,7 +189,7 @@ def test_lookup_failure_stops_retries_and_does_not_claim_no_hospitals():
     session = SearchSession(OfflineSearchProvider())
     session.begin("강남구 역삼동 손가락이 부었어요")
     finish(session)
-    session.fail_lookup()
+    session.fail_run(error_metadata(None, category="lookup", stage="tools"))
     assert session.next_calls() == []
     reply = session.make_reply()
     assert not reply.hospitals
@@ -196,3 +197,58 @@ def test_lookup_failure_stops_retries_and_does_not_claim_no_hospitals():
     assert "후보가 없습니다" not in reply.no_candidate_reason
     session.begin("강남구 역삼동 손가락이 부었어요")
     assert session.lookup_error is None and session.next_calls()
+
+
+@pytest.mark.parametrize("stage", ["initial", "nearby", "beds", "complete", "failed"])
+def test_reading_search_state_does_not_refresh_or_mutate_candidates(stage, monkeypatch):
+    from copy import deepcopy
+
+    session = SearchSession(OfflineSearchProvider())
+    session.begin("가슴이 답답하고 식은땀이 나요. 강남구 역삼동")
+    if stage != "initial":
+        session.geocode(session.location_query)
+        session.list_nearby_ers(session.location["lat"], session.location["lon"], 5)
+    if stage in {"beds", "complete", "failed"}:
+        session.get_er_bed_status(session.regions(), sorted(session.facilities))
+    if stage in {"complete", "failed"}:
+        finish(session)
+    if stage == "failed":
+        session.fail_run(error_metadata(None, category="lookup", stage="tools"))
+
+    before = deepcopy(session.snapshot())
+    audit = deepcopy(session.audit)
+
+    def unexpected_refresh(*args, **kwargs):
+        raise AssertionError("a read must not recompute candidates")
+
+    monkeypatch.setattr("er_finder.search.service.select_candidates", unexpected_refresh)
+    first = session.status()
+    for _ in range(3):
+        assert session.status() == first
+        session.next_calls()
+        session.make_reply()
+        assert session.snapshot() == before
+        assert session.audit == audit
+
+
+def test_reply_candidates_are_detached_from_search_evidence():
+    session = SearchSession(OfflineSearchProvider())
+    session.begin("가슴이 답답하고 식은땀이 나요. 강남구 역삼동")
+    reply = finish(session)
+    original = session.candidates[0].name
+    reply.hospitals[0].name = "changed outside the session"
+    assert session.candidates[0].name == original
+    assert session.make_reply().hospitals[0].name == original
+
+
+def test_reply_rechecks_freshness_without_mutating_stored_candidates():
+    from datetime import timedelta
+
+    current = datetime.fromisoformat("2026-09-10T09:00:00+09:00")
+    session = SearchSession(OfflineSearchProvider(), now=lambda: current)
+    session.begin("가슴이 답답하고 식은땀이 나요. 강남구 역삼동")
+    reply = finish(session)
+    assert reply.hospitals and all(not h.is_stale for h in reply.hospitals)
+    current += timedelta(minutes=16)
+    assert all(h.is_stale for h in session.make_reply().hospitals)
+    assert all(not h.is_stale for h in session.candidates)

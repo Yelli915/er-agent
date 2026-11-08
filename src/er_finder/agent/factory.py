@@ -10,9 +10,10 @@ from collections.abc import Callable
 from typing import Any
 
 from er_finder.config import Settings
+from er_finder.guardrails.contracts import Classifier
 
 
-def build_models(settings: Settings) -> tuple[Any, Any]:
+def build_models(settings: Settings) -> tuple[Any, Classifier]:
     """Return the main chat model and the classifier built on its own cheaper model."""
     ChatGoogle = importlib.import_module("langchain_google_genai").ChatGoogleGenerativeAI  # noqa: N806
     InputClassifier = importlib.import_module("er_finder.guardrails.triage").InputClassifier  # noqa: N806
@@ -40,13 +41,12 @@ def build_models(settings: Settings) -> tuple[Any, Any]:
 def default_runner_factory(**kwargs: Any) -> Any:
     """Construct the real model, classifier and runner only after explicit connection."""
     runner_module = importlib.import_module("er_finder.agent.runner")
-    factory_module = importlib.import_module("er_finder.agent.factory")
     provider_module = importlib.import_module("er_finder.web.provider")
     settings = Settings()
     provider = None
     try:
         provider = provider_module.LiveProvider(kakao_key=os.environ.get("KAKAO_REST_API_KEY", ""))
-        model, classifier = factory_module.build_models(settings)
+        model, classifier = build_models(settings)
         runner = runner_module.ERFinder(
             provider=provider, model=model, classifier=classifier, **kwargs
         )

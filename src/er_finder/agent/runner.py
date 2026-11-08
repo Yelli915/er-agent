@@ -1,66 +1,45 @@
 """Run the real LangGraph agent using the shared memory and search implementations."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from time import perf_counter
 from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import merge_configs
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
-from er_finder.agent.adapters import VisitSelection, selected_index
-from er_finder.agent.diagnostics import RunDiagnostics, error_metadata
-from er_finder.agent.graph import build_graph
+from er_finder.agent.adapters import selected_index
+from er_finder.agent.assembly import build_runner_dependencies
+from er_finder.agent.diagnostics import RunDiagnostics
 from er_finder.agent.progress import ProgressCallback, progress_lines
-from er_finder.agent.renderer import render_reply
+from er_finder.agent.results import ChatResult, RunResultProcessor
+from er_finder.errors import ApprovalStateError
+from er_finder.guardrails.contracts import Classifier
 from er_finder.guardrails.evidence import safe_data
 from er_finder.guardrails.input_guard import InputAssessment, assess_input
-from er_finder.guardrails.middleware import ModelCounter
 from er_finder.guardrails.pii import mask_pii
-from er_finder.guardrails.triage import InputClassifier
-from er_finder.memory.context import ERFinderContext, TransportMode
-from er_finder.memory.session import SessionManager
-from er_finder.memory.store import ERFinderStore
+from er_finder.memory.context import TransportMode
 from er_finder.messages import (
     EMPTY_INPUT,
     NO_PENDING_APPROVAL,
     NO_VISIT_HISTORY,
     PICK_LISTED_CANDIDATE,
-    REQUEST_FAILED,
     USER_REJECTED_SAVE,
-    VISIT_REJECTED,
-    VISIT_SAVE_FAILED,
-    VISIT_SAVED,
-    VISIT_SAVED_REPLY_FAILED,
 )
 from er_finder.models import EMERGENCY, ERSearchReply
-from er_finder.search.service import SearchSession
-from er_finder.usage import ClassifierUsage, RunUsage
+from er_finder.search.contracts import SearchProvider
+from er_finder.usage import ClassifierUsage
 
 __all__ = ["ChatResult", "ERFinder", "RunDiagnostics"]
 
 RECENT_VISIT_MARKERS = ("지난번", "최근 방문")
 
 
-@dataclass
-class ChatResult:
-    reply: ERSearchReply
-    text: str
-    pending_approval: dict[str, Any] | None = None
-    note: str | None = None
-    diagnostics: RunDiagnostics | None = None
-
-
 class ERFinder:
     def __init__(
         self,
-        provider: Any,
+        provider: SearchProvider,
         model: Any = None,
-        classifier: Any = None,
+        classifier: Classifier | None = None,
         user_id: str = "local-user",
         transport: TransportMode = "car",
         store: Any = None,
@@ -70,43 +49,39 @@ class ERFinder:
         on_progress: ProgressCallback | None = None,
     ) -> None:
         self.on_progress = on_progress
-        self.context = ERFinderContext(user_id, transport)
-        self.session = SearchSession(provider, transport)
-        self.store = store if store is not None else InMemoryStore()
-        self.profiles = ERFinderStore(self.store, user_id)
-        self.visit = VisitSelection(self.profiles, self.session)
-        self.checkpointer = (
-            checkpointer
-            if checkpointer is not None
-            else InMemorySaver(
-                serde=JsonPlusSerializer(
-                    # Pydantic dumps nested candidates as data; only the reply is revived.
-                    allowed_msgpack_modules=[("er_finder.models", "ERSearchReply")],
-                )
-            )
-        )
-        self.session_manager = SessionManager(self.checkpointer)
-        self.classifier = classifier if classifier is not None else InputClassifier()
-        self.on_emergency = on_emergency
-        self.counter = ModelCounter()
-        self.graph = build_graph(
+        dependencies = build_runner_dependencies(
+            provider,
             model,
-            session=self.session,
-            profiles=self.profiles,
-            visit=self.visit,
-            counter=self.counter,
-            store=self.store,
-            checkpointer=self.checkpointer,
+            classifier=classifier,
+            user_id=user_id,
+            transport=transport,
+            store=store,
+            checkpointer=checkpointer,
             server_planned_calls=server_planned_calls,
         )
-        self.run_config = self.session_manager.build_config(user_id)
-        self.run_config["configurable"].update(session=self.session, visit=self.visit)
+        self.context = dependencies.context
+        self.session = dependencies.session
+        self.store = dependencies.store
+        self.profiles = dependencies.profiles
+        self.visit = dependencies.visit
+        self.checkpointer = dependencies.checkpointer
+        self.session_manager = dependencies.session_manager
+        self.classifier = dependencies.classifier
+        self.counter = dependencies.counter
+        self.graph = dependencies.graph
+        self.run_config = dependencies.run_config
+        self.on_emergency = on_emergency
+        self._results = RunResultProcessor(
+            self.session,
+            self.visit,
+            self.session_manager,
+            user_id,
+            self.counter,
+        )
         self.last_reply: ERSearchReply | None = None
         self.pending = False
-        self.mode = "search"
         self.last_diagnostics: RunDiagnostics | None = None
         self.last_error_type: str | None = None
-        self._session_model_calls = 0
         self._classifier_usage = ClassifierUsage()
 
     def chat(self, text: str, *, force_refresh: bool = False) -> ChatResult:
@@ -123,11 +98,9 @@ class ERFinder:
         history_note = self._history_note(text)
         if selected is not None:
             if self.last_reply is None or selected >= len(self.last_reply.hospitals):
-                raise ValueError(PICK_LISTED_CANDIDATE)
-            self.mode = "visit"
+                raise ApprovalStateError(PICK_LISTED_CANDIDATE)
             self.visit.prepare(self.last_reply.hospitals[selected], self.session.symptom_text)
         else:
-            self.mode = "search"
             self.visit.reset()
             self.session.begin(
                 text,
@@ -173,7 +146,7 @@ class ERFinder:
 
     def approve(self, approved: bool) -> ChatResult:
         if not self.pending or not self.graph.get_state(self.run_config).interrupts:
-            raise ValueError(NO_PENDING_APPROVAL)
+            raise ApprovalStateError(NO_PENDING_APPROVAL)
         self.visit.authorize(approved)
         self.pending = False
         self._classifier_usage = ClassifierUsage()
@@ -184,53 +157,19 @@ class ERFinder:
         return self._run_graph(Command(resume={"decisions": [decision]}))
 
     def _run_graph(self, inputs: Any, history_note: str | None = None) -> ChatResult:
-        started = perf_counter()
-        usage = RunUsage()
-        succeeded = False
-        error_info = None
         self.last_error_type = None
-        try:
-            output = self._execute(inputs, merge_configs(self.run_config, {"callbacks": [usage]}))
-            self.pending = bool(output.get("__interrupt__"))
-            reply = self.session.check_evidence(output.get("structured_response"))
-            note = self.session.assessment.reason or history_note
-            if self.visit.decided and not self.pending:
-                if self.visit.saved:
-                    note = VISIT_SAVED
-                elif not self.visit.approved:
-                    note = VISIT_REJECTED
-                else:
-                    note = VISIT_SAVE_FAILED
-            succeeded = not bool(self.session.lookup_error)
-        except Exception as error:
-            error_info = error_metadata(error)
-            self.last_error_type = error_info["error_type"]
-            saved = self.visit.saved
-            self.pending = False
-            self.visit.reset()
-            self.session_manager.reset_session(self.context.user_id)
-            self.session.fail_lookup()
-            reply = self.session.check_evidence(None)
-            note = VISIT_SAVED_REPLY_FAILED if saved else REQUEST_FAILED
-        self._session_model_calls += self.counter.calls
-        self.last_diagnostics = RunDiagnostics.from_run(
-            usage=usage,
+        outcome = self._results.run(
+            lambda usage: self._execute(
+                inputs, merge_configs(self.run_config, {"callbacks": [usage]})
+            ),
             classifier_usage=self._classifier_usage,
-            model_calls=self.counter.calls,
-            session_model_calls=self._session_model_calls,
-            elapsed_seconds=perf_counter() - started,
-            succeeded=succeeded,
-            error=error_info,
+            history_note=history_note,
         )
-        self.last_reply = reply
-        pending = self.visit.pending if self.pending else None
-        return ChatResult(
-            reply=reply,
-            text=render_reply(reply, note=note, pending=pending),
-            pending_approval=pending,
-            note=note,
-            diagnostics=self.last_diagnostics,
-        )
+        self.pending = outcome.pending
+        self.last_reply = outcome.result.reply
+        self.last_diagnostics = outcome.result.diagnostics
+        self.last_error_type = self.last_diagnostics.error_type if self.last_diagnostics else None
+        return outcome.result
 
     def _execute(self, inputs: Any, config: Any) -> dict[str, Any]:
         """Run the graph; with a progress listener, stream updates and read the final state."""
@@ -258,11 +197,10 @@ class ERFinder:
         self.session.clear()
         self.visit.reset()
         self.pending = False
-        self.mode = "search"
         self.last_reply = None
         self.last_diagnostics = None
         self.last_error_type = None
-        self._session_model_calls = 0
+        self._results.reset()
 
     def close(self) -> None:
         try:

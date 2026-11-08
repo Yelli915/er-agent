@@ -389,3 +389,55 @@ def test_default_factory_closes_resources_when_runner_construction_fails(live, m
     backend = live.RunnerBackend()
     assert backend.connect().category == "contract"
     assert providers and providers[0].closed
+
+
+@pytest.mark.parametrize("category", ["lookup", "model", "approval", "internal"])
+def test_failure_results_use_fixed_messages_and_remove_candidates(live, monkeypatch, category):
+    from er_finder.messages import FAILURE_MESSAGES
+
+    backend, runners = connected(live)
+    backend.chat("test", transport="car")
+    failed = SimpleNamespace(
+        reply=reply(),
+        pending_approval={"unexpected": "private"},
+        note="TEST_ONLY_PRIVATE_ERROR_TEXT",
+        diagnostics=SimpleNamespace(succeeded=False, failure_category=category),
+    )
+    monkeypatch.setattr(runners[0], "chat", lambda *args, **kwargs: failed)
+    result = backend.chat("test", transport="car")
+    assert not result.reply.hospitals and result.pending_approval is None
+    assert result.note == FAILURE_MESSAGES[category]
+    assert "TEST_ONLY_PRIVATE_ERROR_TEXT" not in repr(result)
+    assert backend.select_hospital("H1").pending_approval is None
+    assert backend.approve(True).pending_approval is None
+    assert runners[0].approvals == []
+
+
+def test_completed_write_notice_is_preserved_when_the_model_reply_failed(live, monkeypatch):
+    from er_finder.messages import VISIT_SAVED_REPLY_FAILED
+
+    backend, runners = connected(live)
+    failed = SimpleNamespace(
+        reply=reply(),
+        pending_approval=None,
+        note=VISIT_SAVED_REPLY_FAILED,
+        diagnostics=SimpleNamespace(succeeded=False, failure_category="model"),
+    )
+    monkeypatch.setattr(runners[0], "chat", lambda *args, **kwargs: failed)
+    result = backend.chat("test", transport="car")
+    assert result.note == VISIT_SAVED_REPLY_FAILED
+    assert not result.reply.hospitals and result.pending_approval is None
+
+
+@pytest.mark.parametrize("category", ["lookup", "model", "approval"])
+def test_typed_runner_errors_do_not_expose_their_cause(live, category):
+    from er_finder.errors import OperationError
+
+    backend, runners = connected(live)
+    error = OperationError(category, "graph")
+    error.__cause__ = RuntimeError("TEST_ONLY_PRIVATE_ERROR_TEXT")
+    runners[0].failure = error
+    result = backend.chat("test", transport="car")
+    assert result.reply is None and result.pending_approval is None
+    assert backend.status().category == category
+    assert "TEST_ONLY_PRIVATE_ERROR_TEXT" not in result.note

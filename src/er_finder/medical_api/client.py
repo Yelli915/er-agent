@@ -11,14 +11,16 @@ import math
 import os
 import re
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from urllib.parse import unquote
 
 import httpx
 from dotenv import load_dotenv
 
+from er_finder.freshness import is_stale
 from er_finder.http_retry import request_with_transport_retries
+from er_finder.regions import normalize_sido
 
 from . import cache, parser
 
@@ -88,7 +90,7 @@ def _build_params(extra: dict[str, Any], num_of_rows: int = 100) -> dict[str, An
 
 
 def _region_params(sido: str, sigungu: str) -> dict[str, Any]:
-    params = {"STAGE1": parser.normalize_sido(sido)}
+    params = {"STAGE1": normalize_sido(sido)}
     if sigungu:
         params["STAGE2"] = sigungu
     return params
@@ -137,16 +139,9 @@ def _lookup(
 
 
 def _is_stale(beds_updated_at: str | None) -> bool:
-    if not beds_updated_at:
-        return True
-    try:
-        updated_at = datetime.fromisoformat(beds_updated_at)
-        if updated_at.tzinfo is None:
-            return True
-        age = datetime.now(parser.KOREA_TZ) - updated_at
-        return age > timedelta(minutes=STALE_MINUTES) or age < -timedelta(minutes=1)
-    except (TypeError, ValueError):
-        return True
+    return is_stale(
+        beds_updated_at, datetime.now(parser.KOREA_TZ), max_age_seconds=STALE_MINUTES * 60
+    )
 
 
 def _cached_detail(detail_cache: dict[str, Any], hpid: str) -> dict[str, Any] | None:
@@ -214,7 +209,7 @@ def get_er_bed_status(
 ) -> list[dict[str, Any]]:
     if bed_cache is None:
         bed_cache = {}
-    key = cache.make_key(parser.normalize_sido(sido), sigungu)
+    key = cache.make_key(normalize_sido(sido), sigungu)
     rows = cache.get(bed_cache, key, ttl=BED_CACHE_TTL)
     is_cached = rows is not None
     lookup_failed = False

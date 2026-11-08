@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from er_finder.errors import FailureMetadata, error_metadata
 from er_finder.memory.store import ERFinderStore, VisitRecord
 
 
@@ -48,6 +49,7 @@ class VisitPlanResult:
     saved: bool
     visit_id: str | None = None
     reason: str | None = None
+    failure: FailureMetadata | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {"saved": self.saved, "visit_id": self.visit_id}
@@ -83,7 +85,11 @@ class VisitPlanService:
                 name=plan.name,
                 symptom_summary=plan.symptom_summary,
             )
-        except Exception:
-            return VisitPlanResult(saved=False, reason="store_write_failed")
+        except Exception as error:
+            return VisitPlanResult(
+                saved=False,
+                reason="store_write_failed",
+                failure=error_metadata(error, category="approval", stage="save_visit_plan"),
+            )
 
         return VisitPlanResult(saved=True, visit_id=record["visit_id"])

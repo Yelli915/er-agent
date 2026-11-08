@@ -13,42 +13,14 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from er_finder.regions import SIDO_ALIASES
+from er_finder.regions import normalize_sido as normalize_sido
+
 KOREA_TZ = ZoneInfo("Asia/Seoul")
 
 
 class EgenResponseError(Exception):
     """resultCode가 00이 아니거나 XML을 파싱할 수 없을 때 발생시키는 예외."""
-
-
-# 카카오 시도 표기 -> E-Gen 시도 표기 (design.md §B.2)
-# 강원(2023년), 전북(2024년)은 "OO특별자치도"로 행정구역명이 바뀌었다. 실제 E-Gen
-# 응답 주소로 확인함(강원): STAGE1="강원도"로 조회하면 0건, "강원특별자치도"로 조회해야 나옴.
-SIDO_ALIASES = {
-    "서울": "서울특별시",
-    "부산": "부산광역시",
-    "대구": "대구광역시",
-    "인천": "인천광역시",
-    "광주": "광주광역시",
-    "대전": "대전광역시",
-    "울산": "울산광역시",
-    "세종": "세종특별자치시",
-    "경기": "경기도",
-    "강원": "강원특별자치도",
-    "충북": "충청북도",
-    "충남": "충청남도",
-    "전북": "전북특별자치도",
-    "전남": "전라남도",
-    "경북": "경상북도",
-    "경남": "경상남도",
-    "제주": "제주특별자치도",
-    "강원도": "강원특별자치도",
-    "전라북도": "전북특별자치도",
-}
-
-
-def normalize_sido(name: str) -> str:
-    """카카오 시도 표기를 E-Gen 시도 표기로 바꾼다. 이미 E-Gen 표기면 그대로 둔다."""
-    return SIDO_ALIASES.get(name, name)
 
 
 def region_from_address(address: str | None) -> tuple[str | None, str | None]:

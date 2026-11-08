@@ -13,6 +13,14 @@ REQUEST_FAILED = "요청 처리에 실패해 병원 후보를 표시하지 않�
 USER_REJECTED_SAVE = "사용자가 저장을 거절했습니다."
 NO_VISIT_HISTORY = "저장된 방문 기록이 없습니다."
 LOOKUP_FAILED = "외부 정보 조회에 실패하여 현재 후보를 확인할 수 없습니다."
+MODEL_FAILED = "안내 응답을 생성하지 못해 병원 후보를 표시하지 않습니다. 다시 조회해 주세요."
+APPROVAL_FAILED = "방문 계획의 저장 상태를 확인하지 못했습니다. 저장을 반복하지 마세요."
+FAILURE_MESSAGES = {
+    "lookup": LOOKUP_FAILED,
+    "model": MODEL_FAILED,
+    "approval": APPROVAL_FAILED,
+    "internal": REQUEST_FAILED,
+}
 GEOCODE_NOT_ALLOWED = "현재 단계에서는 위치 검색을 할 수 없습니다."
 LOCATION_QUERY_INVALID = "구체적인 위치를 150자 이내로 입력하세요."
 BEDS_REQUIRED_FIRST = "먼저 병상 조회를 완료해야 합니다."

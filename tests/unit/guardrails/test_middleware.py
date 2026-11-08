@@ -16,10 +16,10 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 from pydantic import Field
 
+from er_finder.agent.execution import ModelCounter, ServerPlannedCalls
 from er_finder.guardrails.middleware import (
     EmergencyInputGuard,
     EvidenceCheckMiddleware,
-    ModelCounter,
     ProfileDynamicPrompt,
     ToolSafetyMiddleware,
 )
@@ -90,7 +90,8 @@ def test_real_graph_replaces_wrong_order_with_server_calls_and_counts_models():
         tools=search_tools(session),
         response_format=ToolStrategy(ERSearchReply),
         middleware=[
-            ToolSafetyMiddleware(visit, session),
+            ServerPlannedCalls(session, visit, enabled=False),
+            ToolSafetyMiddleware(session),
             counter,
             EvidenceCheckMiddleware(session),
         ],
@@ -198,7 +199,10 @@ def test_external_lookup_failure_stops_before_another_model_or_api_call():
         response_format=ToolStrategy(ERSearchReply),
         middleware=[
             ModelCallLimitMiddleware(run_limit=4, exit_behavior="end"),
-            ToolSafetyMiddleware(SimpleNamespace(pending=None, decided=False), session),
+            ServerPlannedCalls(
+                session, SimpleNamespace(pending=None, decided=False), enabled=False
+            ),
+            ToolSafetyMiddleware(session),
             counter,
             EvidenceCheckMiddleware(session),
         ],
@@ -233,7 +237,10 @@ def test_unauthorized_save_never_interrupts_or_leaves_orphan_results():
         tools=[save_visit_plan],
         middleware=[
             HumanInTheLoopMiddleware(interrupt_on={"save_visit_plan": True}),
-            ToolSafetyMiddleware(SimpleNamespace(pending=None, decided=False), session),
+            ServerPlannedCalls(
+                session, SimpleNamespace(pending=None, decided=False), enabled=False
+            ),
+            ToolSafetyMiddleware(session),
             EvidenceCheckMiddleware(session),
         ],
         checkpointer=InMemorySaver(),
@@ -287,7 +294,8 @@ def test_selected_visit_has_one_real_hitl_request_and_only_approved_write(approv
             HumanInTheLoopMiddleware(
                 interrupt_on={"save_visit_plan": {"allowed_decisions": ["approve", "reject"]}}
             ),
-            ToolSafetyMiddleware(visit, session),
+            ServerPlannedCalls(session, visit, enabled=False),
+            ToolSafetyMiddleware(session),
             EvidenceCheckMiddleware(session),
         ],
         checkpointer=InMemorySaver(),

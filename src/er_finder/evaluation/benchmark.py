@@ -75,6 +75,9 @@ class RunRecord:
     classifier_elapsed_seconds: float
     cost_usd: float | None
     error_type: str | None = None
+    failure_category: str | None = None
+    failure_stage: str | None = None
+    failure_code: str | None = None
 
 
 def estimate_cost(record: dict[str, Any] | RunRecord, prices: Prices | None) -> float | None:
@@ -168,6 +171,9 @@ def record_from_result(
         classifier_elapsed_seconds=d.classifier_elapsed_seconds if d else 0.0,
         cost_usd=None,
         error_type=d.error_type if d else None,
+        failure_category=getattr(d, "failure_category", None),
+        failure_stage=getattr(d, "failure_stage", None),
+        failure_code=getattr(d, "failure_code", None),
     )
     record.cost_usd = estimate_cost(record, prices)
     return record

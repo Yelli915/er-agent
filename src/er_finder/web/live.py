@@ -13,11 +13,20 @@ from langgraph.store.memory import InMemoryStore
 from er_finder.agent.factory import default_runner_factory
 from er_finder.config import AGENT_REQUIRED_KEYS, REQUIRED_KEYS, credential_status, load_environment
 from er_finder.demo import demo_runner_factory, is_demo
+from er_finder.errors import OperationError
 from er_finder.memory.store import ERFinderStore
 from er_finder.memory.visit_plan import PendingVisitPlan
+from er_finder.messages import (
+    ACTION_CRITICAL,
+    ACTION_LOOKUP_FAILED,
+    FAILURE_MESSAGES,
+    VISIT_SAVED_REPLY_FAILED,
+)
 from er_finder.web.contracts import UIReply, WebResult
 
 _MESSAGES = {
+    "lookup": FAILURE_MESSAGES["lookup"],
+    "model": FAILURE_MESSAGES["model"],
     "not_connected": "실제 서비스에 아직 연결하지 않았습니다. 연결 확인을 실행해 주세요.",
     "keys": "필수 API 키가 설정되지 않았습니다. 설정 상태를 확인해 주세요.",
     "module": "에이전트 모듈을 불러오지 못했습니다. 백엔드 연결 준비가 필요합니다.",
@@ -155,7 +164,21 @@ class RunnerBackend:
         if not callable(getattr(domain_reply, "model_dump", None)):
             raise ConnectionUnavailable("contract")
         reply = UIReply.model_validate(domain_reply.model_dump())
-        raw_pending = result.pending_approval
+        category = getattr(getattr(result, "diagnostics", None), "failure_category", None)
+        if category not in FAILURE_MESSAGES:
+            category = None
+        if category is not None:
+            reply = UIReply.model_validate(
+                {
+                    **reply.model_dump(),
+                    "hospitals": [],
+                    "no_candidate_reason": FAILURE_MESSAGES[category],
+                    "next_action": ACTION_CRITICAL
+                    if reply.call_119_first
+                    else ACTION_LOOKUP_FAILED,
+                }
+            )
+        raw_pending = result.pending_approval if category is None else None
         pending = None
         if raw_pending is not None:
             if not isinstance(raw_pending, dict):
@@ -178,8 +201,29 @@ class RunnerBackend:
         note = getattr(result, "note", None)
         if note is not None and not isinstance(note, str):
             raise ConnectionUnavailable("contract")
+        if category is not None and note != VISIT_SAVED_REPLY_FAILED:
+            note = FAILURE_MESSAGES[category]
         self._reply, self._pending = reply, pending
         return WebResult(reply=reply, pending_approval=pending, note=note)
+
+    def _chat_runner(
+        self,
+        text: str,
+        *,
+        force_refresh: bool = False,
+        selected: str | None = None,
+    ) -> WebResult:
+        try:
+            self._attach_progress()
+            return self._receive(
+                self._runner.chat(text, force_refresh=force_refresh), selected=selected
+            )
+        except OperationError as error:
+            return self._failed(error.category if error.category != "internal" else "runtime")
+        except ConnectionUnavailable as exc:
+            return self._failed(exc.category)
+        except Exception:
+            return self._failed("runtime")
 
     def chat(self, text: str, *, transport: str, force_refresh: bool = False) -> WebResult:
         if self._runner is None:
@@ -193,13 +237,7 @@ class RunnerBackend:
         if self._runner is None:
             return WebResult(note=self.status().message)
         self._pending = None
-        try:
-            self._attach_progress()
-            return self._receive(self._runner.chat(text, force_refresh=force_refresh))
-        except ConnectionUnavailable as exc:
-            return self._failed(exc.category)
-        except Exception:
-            return self._failed("runtime")
+        return self._chat_runner(text, force_refresh=force_refresh)
 
     def select_hospital(self, hpid: str) -> WebResult:
         hospitals = self._reply.hospitals if self._reply is not None else []
@@ -212,13 +250,7 @@ class RunnerBackend:
                 pending_approval=self._pending,
                 note="현재 방문 계획의 승인 또는 거절을 먼저 완료해 주세요.",
             )
-        try:
-            self._attach_progress()
-            return self._receive(self._runner.chat(f"{index + 1}번"), selected=hpid)
-        except ConnectionUnavailable as exc:
-            return self._failed(exc.category)
-        except Exception:
-            return self._failed("runtime")
+        return self._chat_runner(f"{index + 1}번", selected=hpid)
 
     def approve(self, approved: bool) -> WebResult:
         if self._runner is None or self._pending is None:

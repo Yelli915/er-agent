@@ -2,8 +2,29 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from er_finder.search.geocoder import KakaoGeocoder
+
+
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        ("강원도 강릉시 저동 94", "강원특별자치도"),
+        ("전라북도 전주시 덕진구 건지로 20", "전북특별자치도"),
+    ],
+)
+def test_legacy_region_names_use_shared_normalization(address, expected):
+    document = {"address_name": address, "x": "127.0", "y": "37.5"}
+    geocoder = KakaoGeocoder(
+        kakao_key="key",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"documents": [document]})
+            )
+        ),
+    )
+    assert geocoder.geocode(address)["sido"] == expected
 
 
 def test_geocode_uses_address_then_keyword_fallback_and_parses_region():

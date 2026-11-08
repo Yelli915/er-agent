@@ -226,3 +226,15 @@ def test_cli_check_fails_on_a_leaked_key(tmp_path):
         timeout=30,
     )
     assert result.returncode == 1 and "커밋하지 마세요" in result.stderr
+
+
+def test_benchmark_record_keeps_the_sanitized_failure_origin():
+    result = FakeRunner([]).chat("test")
+    result.diagnostics.succeeded = False
+    result.diagnostics.failure_category = "model"
+    result.diagnostics.failure_stage = "model"
+    result.diagnostics.failure_code = "model_failed"
+    record = benchmark.record_from_result("test", 1, result, 0.1, None)
+    assert record.failure_category == "model"
+    assert record.failure_stage == "model"
+    assert record.failure_code == "model_failed"

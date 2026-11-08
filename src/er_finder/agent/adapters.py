@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain.agents import AgentState
 
+from er_finder.errors import ApprovalStateError
 from er_finder.guardrails.pii import mask_pii
 from er_finder.memory.store import ERFinderStore
 from er_finder.memory.visit_plan import (
@@ -76,10 +77,10 @@ class VisitSelection:
         with self._lock:
             self.reset()
             if self._session.next_calls():
-                raise ValueError(VISIT_FINISH_LOOKUP_FIRST)
+                raise ApprovalStateError(VISIT_FINISH_LOOKUP_FIRST)
             candidate = next((h for h in self._session.candidates if h.hpid == hospital.hpid), None)
             if candidate is None or candidate.model_dump() != hospital.model_dump():
-                raise ValueError(VISIT_ONLY_CURRENT_CANDIDATES)
+                raise ApprovalStateError(VISIT_ONLY_CURRENT_CANDIDATES)
             self._plan = PendingVisitPlan(
                 hpid=hospital.hpid,
                 name=hospital.name,
@@ -90,25 +91,25 @@ class VisitSelection:
     def validate(self, arguments: dict[str, Any]) -> None:
         with self._lock:
             if self._plan is None or self._plan.status is not VisitPlanStatus.PENDING or self.saved:
-                raise ValueError(VISIT_NO_SAVABLE_PLAN)
+                raise ApprovalStateError(VISIT_NO_SAVABLE_PLAN)
             if arguments != self.pending:
-                raise ValueError(VISIT_MISMATCH)
+                raise ApprovalStateError(VISIT_MISMATCH)
             if self._search_timestamp != self._session.data_timestamp:
-                raise ValueError(VISIT_SEARCH_CHANGED)
+                raise ApprovalStateError(VISIT_SEARCH_CHANGED)
             if not any(
                 h.hpid == self._plan.hpid and h.name == self._plan.name
                 for h in self._session.candidates
             ):
-                raise ValueError(VISIT_NOT_A_CANDIDATE)
+                raise ApprovalStateError(VISIT_NOT_A_CANDIDATE)
 
     def authorize(self, approved: bool) -> None:
         with self._lock:
             pending = self.pending
             if pending is None:
-                raise ValueError(VISIT_NO_SAVABLE_PLAN)
+                raise ApprovalStateError(VISIT_NO_SAVABLE_PLAN)
             self.validate(pending)
             if self.decided:
-                raise ValueError(VISIT_ALREADY_DECIDED)
+                raise ApprovalStateError(VISIT_ALREADY_DECIDED)
             self.approved, self.decided = approved, True
             if not approved and self._plan is not None:
                 self.result = self._service.decide(self._plan, approved=False)
@@ -117,10 +118,12 @@ class VisitSelection:
         with self._lock:
             self.validate(dict(hpid=hpid, name=name, symptom_summary=symptom_summary))
             if not self.decided or not self.approved:
-                raise ValueError(VISIT_APPROVAL_REQUIRED)
+                raise ApprovalStateError(VISIT_APPROVAL_REQUIRED)
             if self._plan is None:
-                raise ValueError(VISIT_NO_SAVABLE_PLAN)
+                raise ApprovalStateError(VISIT_NO_SAVABLE_PLAN)
             result = self._service.decide(self._plan, approved=True)
             self.result = result
             self.saved = result.saved
+            if result.failure is not None:
+                self._session.fail_run(result.failure)
             return result.as_dict()

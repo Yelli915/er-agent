@@ -12,12 +12,12 @@ from langchain.agents.middleware import (
 from langchain.agents.structured_output import ToolStrategy
 
 from er_finder.agent.adapters import ERGraphState
+from er_finder.agent.execution import ServerPlannedCalls
 from er_finder.agent.tools import TOOLS
 from er_finder.guardrails.middleware import (
     EmergencyInputGuard,
     EvidenceCheckMiddleware,
     ProfileDynamicPrompt,
-    ServerPlannedCalls,
     ToolSafetyMiddleware,
 )
 from er_finder.guardrails.pii import PII_PATTERN
@@ -55,16 +55,16 @@ def build_graph(
             ProfileDynamicPrompt(session, profiles, visit),
             PIIMiddleware("korean_personal_data", strategy="redact", detector=PII_PATTERN),
             ModelCallLimitMiddleware(run_limit=MODEL_CALL_LIMIT, exit_behavior="end"),
-            # Outside the counter so skipped turns are not reported as model calls.
-            *([ServerPlannedCalls(session, visit)] if server_planned_calls else []),
-            counter,
             ToolRetryMiddleware(max_retries=TOOL_MAX_RETRIES, initial_delay=TOOL_RETRY_DELAY),
             HumanInTheLoopMiddleware(
                 interrupt_on={"save_visit_plan": {"allowed_decisions": ["approve", "reject"]}},
                 description_prefix="이 방문 계획을 저장할까요?",
             ),
             # after_model hooks run in reverse list order: validate before HITL.
-            ToolSafetyMiddleware(visit, session),
+            ToolSafetyMiddleware(session),
+            # after_model runs before HITL; wrap_model stays outside the counter.
+            ServerPlannedCalls(session, visit, enabled=server_planned_calls),
+            counter,
             EvidenceCheckMiddleware(session),
         ],
     )

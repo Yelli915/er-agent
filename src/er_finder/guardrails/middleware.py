@@ -1,6 +1,5 @@
 import json
 from typing import Any
-from uuid import uuid4
 
 from langchain.agents.middleware import (
     AgentMiddleware,
@@ -9,10 +8,11 @@ from langchain.agents.middleware import (
     dynamic_prompt,
     hook_config,
 )
-from langchain.agents.middleware.types import ModelResponse
-from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
+from er_finder.errors import FailureCategory, OperationError, error_metadata
 from er_finder.guardrails.evidence import sanitize_prose
+from er_finder.messages import FAILURE_MESSAGES
 from er_finder.models import ERSearchReply
 from er_finder.prompts import SYSTEM_PROMPT
 
@@ -54,7 +54,7 @@ def ProfileDynamicPrompt(session: Any, profiles: Any, visit: Any) -> Any:
 
     @dynamic_prompt
     def profile_dynamic_prompt(request: Any) -> str:
-        data = session.status()
+        data = session.status(next_calls=request.state.get("planned_calls"))
         data.update(
             transport=request.runtime.context.transport,
             home_address=profiles.get_home_address(),
@@ -85,14 +85,13 @@ def EvidenceCheckMiddleware(session: Any) -> Any:
     @after_agent(name="EvidenceCheckMiddleware")
     def evidence_check(state: Any, runtime: Any) -> dict[str, Any]:
         reply = session.check_evidence(state.get("structured_response"))
-        if reply is not None:
-            updates: dict[str, Any] = {
-                "next_action": sanitize_prose(reply.next_action, limit=NEXT_ACTION_MAX_LENGTH)
-            }
-            if reply.no_candidate_reason:
-                updates["no_candidate_reason"] = sanitize_prose(reply.no_candidate_reason)
-            # model_copy skips validation; re-validate so the edited prose keeps the contract.
-            reply = ERSearchReply.model_validate({**reply.model_dump(), **updates})
+        updates: dict[str, Any] = {
+            "next_action": sanitize_prose(reply.next_action, limit=NEXT_ACTION_MAX_LENGTH)
+        }
+        if reply.no_candidate_reason:
+            updates["no_candidate_reason"] = sanitize_prose(reply.no_candidate_reason)
+        # model_copy skips validation; re-validate so the edited prose keeps the contract.
+        reply = ERSearchReply.model_validate({**reply.model_dump(), **updates})
         return {
             "structured_response": reply,
             **session.snapshot(),
@@ -101,19 +100,13 @@ def EvidenceCheckMiddleware(session: Any) -> Any:
     return evidence_check
 
 
-# 아래 두 미들웨어(ToolSafetyMiddleware, ModelCounter)는 설계서 3.2 표의 가드레일이
-# 아니라 "실행 Middleware"(도구 호출 순서 강제·병렬화, 호출 횟수 집계) 영역
-
-
-def _as_tool_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [{**c, "id": str(uuid4()), "type": "tool_call"} for c in calls]
-
-
 class ToolSafetyMiddleware(AgentMiddleware):
-    def __init__(self, visit: Any, session: Any) -> None:
-        self.visit, self.session = visit, session
+    def __init__(self, session: Any) -> None:
+        self.session = session
 
-    def _lookup_failure_reply(self) -> dict[str, Any]:
+    def _failure_reply(self) -> dict[str, Any] | None:
+        if not self.session.failure:
+            return None
         reply = self.session.check_evidence(None)
         return {
             "jump_to": "end",
@@ -124,82 +117,23 @@ class ToolSafetyMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        self.session.planned_calls = None  # tools may have run since it was planned
-        if self.session.lookup_error:
-            return self._lookup_failure_reply()
-        return None
+        return self._failure_reply()
 
     @hook_config(can_jump_to=["end"])
     def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        if self.session.lookup_error:
-            return self._lookup_failure_reply()
-        last = next((m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None)
-        if last is None:
-            return None
-        if self.visit.pending and not self.visit.decided:
-            self.visit.validate(self.visit.pending)
-            next_calls = [{"name": "save_visit_plan", "args": dict(self.visit.pending)}]
-        else:
-            # ServerPlannedCalls already planned this turn; reuse it instead of re-selecting.
-            planned, self.session.planned_calls = self.session.planned_calls, None
-            if self.visit.pending:
-                next_calls = []
-            else:
-                next_calls = planned if planned is not None else self.session.next_calls()
-        if next_calls:
-            # Server-owned calls enforce both order and arguments, including one selected
-            # save request. Drop acknowledgements of replaced structured-output calls.
-            old_ids = {c["id"] for c in last.tool_calls}
-            removals = [
-                RemoveMessage(id=m.id)
-                for m in state["messages"]
-                if isinstance(m, ToolMessage) and m.tool_call_id in old_ids and m.id
-            ]
-            calls = _as_tool_calls(next_calls)
-            self.session.allow_severe_batch = any(
-                c["name"] == "get_er_bed_status" for c in calls
-            ) and any(c["name"] == "get_severe_acceptance" for c in calls)
-            if self.session.allow_severe_batch:
-                self.session.beds_ready.clear()
-            return {
-                "messages": [
-                    *removals,
-                    last.model_copy(update={"tool_calls": calls, "content": ""}),
-                ],
-                "structured_response": None,
-            }
-        rejected_ids = {c["id"] for c in last.tool_calls if c["name"] == "save_visit_plan"}
-        if rejected_ids:
-            # HITL examines AI tool calls even if a ToolMessage already answers them.
-            # Remove rejected calls and any matching results before HITL can interrupt.
-            removals = [
-                RemoveMessage(id=m.id)
-                for m in state["messages"]
-                if isinstance(m, ToolMessage) and m.tool_call_id in rejected_ids and m.id
-            ]
-            accepted = [c for c in last.tool_calls if c["id"] not in rejected_ids]
-            return {
-                "messages": [
-                    *removals,
-                    last.model_copy(
-                        update={
-                            "tool_calls": accepted,
-                            "content": "사용자 선택이 없어 저장 요청을 차단했습니다.",
-                        }
-                    ),
-                ]
-            }
-        return None
+        return self._failure_reply()
 
     def wrap_tool_call(self, request: Any, handler: Any) -> Any:
         try:
-            if self.session.lookup_error:
+            if self.session.failure:
                 return ToolMessage(
-                    content="외부 조회가 실패하여 추가 조회를 중단했습니다.",
+                    content=FAILURE_MESSAGES[self.session.failure["failure_category"]],
                     tool_call_id=request.tool_call["id"],
                     status="error",
                 )
             return handler(request)
+        except OperationError as error:
+            failure = error_metadata(error)
         except (ValueError, TypeError, KeyError):
             return ToolMessage(
                 content=(
@@ -208,42 +142,18 @@ class ToolSafetyMiddleware(AgentMiddleware):
                 tool_call_id=request.tool_call["id"],
                 status="error",
             )
-        except Exception:
-            self.session.fail_lookup()
-            return ToolMessage(
-                content="외부 조회를 완료하지 못했습니다. 확인되지 않은 정보는 사용하지 마세요.",
-                tool_call_id=request.tool_call["id"],
-                status="error",
+        except Exception as error:
+            category: FailureCategory = (
+                "approval" if request.tool_call["name"] == "save_visit_plan" else "internal"
             )
-
-
-class ModelCounter(AgentMiddleware):
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def wrap_model_call(self, request: Any, handler: Any) -> Any:
-        self.calls += 1
-        return handler(request)
-
-
-class ServerPlannedCalls(AgentMiddleware):
-    """Skip the model while the server already knows the next search calls.
-
-    ToolSafetyMiddleware.after_model replaces whatever tool calls the model proposes with
-    session.next_calls(), so those turns add latency without influencing the result. The
-    model is only invoked once no server-owned call remains (final ERSearchReply) or when a
-    visit plan is pending. Short-circuited turns still count toward ModelCallLimit.
-    """
-
-    def __init__(self, session: Any, visit: Any) -> None:
-        self.session, self.visit = session, visit
-
-    def wrap_model_call(self, request: Any, handler: Any) -> Any:
-        if self.session.lookup_error or self.visit.pending:
-            return handler(request)
-        calls = self.session.next_calls()
-        if not calls:
-            return handler(request)
-        self.session.planned_calls = calls  # consumed by ToolSafetyMiddleware.after_model
-        message = AIMessage(content="", tool_calls=_as_tool_calls(calls))
-        return ModelResponse(result=[message])
+            failure = error_metadata(
+                error,
+                category=category,
+                stage="save_visit_plan" if category == "approval" else "tools",
+            )
+        self.session.fail_run(failure)
+        return ToolMessage(
+            content=FAILURE_MESSAGES[failure["failure_category"]],
+            tool_call_id=request.tool_call["id"],
+            status="error",
+        )

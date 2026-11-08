@@ -235,8 +235,11 @@ def test_model_failure_after_bed_evidence_does_not_publish_partial_candidates(ma
     result = finder.chat("강남구 역삼동 발목이 아파요")
     assert finder.session.beds_checked
     assert result.reply.hospitals == []
-    assert result.reply.no_candidate_reason and "실패" in result.reply.no_candidate_reason
-    assert result.reply.no_candidate_reason == finder.session.lookup_error
+    assert result.reply.no_candidate_reason
+    assert finder.session.lookup_error is None
+    assert result.diagnostics.failure_category == "model"
+    assert result.diagnostics.failure_stage == "model"
+    assert result.diagnostics.failure_code == "model_failed"
     assert not finder.pending
 
 
@@ -327,3 +330,56 @@ def test_failing_progress_listener_does_not_abort_the_search(make_finder):
 
     result = make_finder(on_progress=broken).chat("강남구 역삼동 발목이 아파요")
     assert result.reply.hospitals
+
+
+def test_failed_run_can_recover_without_retaining_error_metadata(make_finder):
+    model = OfflineModel(strategy="failure")
+    finder = make_finder(model=model)
+    failed = finder.chat("강남구 역삼동 발목이 아파요")
+    assert failed.diagnostics.error_type == "RuntimeError"
+    assert not failed.diagnostics.succeeded
+    model.strategy = "next_calls"
+    observed_errors = []
+    finder.on_progress = lambda line: observed_errors.append(finder.last_error_type)
+    recovered = finder.chat("강남구 역삼동 발목이 아파요")
+    assert recovered.reply.hospitals and recovered.diagnostics.succeeded
+    assert recovered.diagnostics.error_type is None
+    assert recovered.diagnostics.error_code is None
+    assert finder.last_error_type is None
+    assert observed_errors and all(error is None for error in observed_errors)
+    assert finder.last_reply is recovered.reply
+    assert finder.last_diagnostics is recovered.diagnostics
+    assert recovered.diagnostics.session_model_calls == (
+        failed.diagnostics.model_calls + recovered.diagnostics.model_calls
+    )
+
+
+def test_end_session_resets_result_accounting_before_the_next_run(make_finder):
+    finder = make_finder()
+    finder.chat("강남구 역삼동 발목이 아파요")
+    second = finder.chat("강남구 역삼동 발목이 아파요")
+    assert second.diagnostics.session_model_calls > second.diagnostics.model_calls
+    finder.end_session()
+    fresh = finder.chat("강남구 역삼동 발목이 아파요")
+    assert fresh.diagnostics.session_model_calls == fresh.diagnostics.model_calls
+    assert fresh.diagnostics.succeeded and finder.last_error_type is None
+
+
+def test_injected_dependencies_are_used_without_sharing_default_state(make_finder):
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from er_finder.guardrails.triage import InputClassifier
+
+    store, checkpointer, classifier = InMemoryStore(), InMemorySaver(), InputClassifier()
+    injected = make_finder(store=store, checkpointer=checkpointer, classifier=classifier)
+    independent = make_finder()
+    assert injected.store is store
+    assert injected.checkpointer is checkpointer
+    assert injected.classifier is classifier
+    injected.profiles.set_home_address("test-address", consent=True)
+    injected.chat("강남구 역삼동 발목이 아파요")
+    assert checkpointer.get_tuple(injected.run_config) is not None
+    assert independent.profiles.get_home_address() is None
+    assert independent.checkpointer.get_tuple(independent.run_config) is None
+    result = independent.chat("강남구 역삼동 발목이 아파요")
+    assert result.diagnostics.session_model_calls == result.diagnostics.model_calls

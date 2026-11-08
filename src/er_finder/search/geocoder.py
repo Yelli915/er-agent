@@ -10,29 +10,10 @@ from typing import Any
 import httpx
 
 from er_finder.http_retry import SAFE_TIMEOUT, request_with_transport_retries
+from er_finder.regions import normalize_sido
 
 _ADDRESS_URL = "https://dapi.kakao.com/v2/local/search/address.json"
 _KEYWORD_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
-
-_SIDO_ALIASES = {
-    "서울": "서울특별시",
-    "부산": "부산광역시",
-    "대구": "대구광역시",
-    "인천": "인천광역시",
-    "광주": "광주광역시",
-    "대전": "대전광역시",
-    "울산": "울산광역시",
-    "세종": "세종특별자치시",
-    "경기": "경기도",
-    "강원": "강원특별자치도",
-    "충북": "충청북도",
-    "충남": "충청남도",
-    "전북": "전북특별자치도",
-    "전남": "전라남도",
-    "경북": "경상북도",
-    "경남": "경상남도",
-    "제주": "제주특별자치도",
-}
 
 
 def empty_geocode() -> dict[str, Any]:
@@ -50,7 +31,7 @@ def region_from_address(address: str) -> tuple[str | None, str | None]:
     parts = address.split()
     if not parts:
         return None, None
-    sido = _SIDO_ALIASES.get(parts[0], parts[0])
+    sido = normalize_sido(parts[0])
     sigungu = parts[1] if len(parts) > 1 else None
     return sido, sigungu
 

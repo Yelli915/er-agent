@@ -81,25 +81,33 @@
 ### A.4 모듈 경계
 
 - `search`는 좌표, 거리, 정렬만 담당한다. 병상과 중증 수용 데이터는 `medical_api`가 정규화한 dict로만 받는다.
-- `guardrails/middleware.py`는 미들웨어를 제공하고, `agent/graph.py`의 `build_graph()`가 이를 조립하고 `agent/runner.py`의 `ERFinder`가 호출한다. `agent/factory.py`는 모델과 분류기의 생성만 맡으며 웹과 벤치마크가 함께 사용한다.
+- `guardrails/middleware.py`는 입력·출력 검증과 조회 실패 차단을, `agent/execution.py`는 도구 호출 계획·실행 제어와 모델 호출 집계를 담당한다. `agent/graph.py`의 `build_graph()`가 이를 조립하고 `agent/runner.py`의 `ERFinder`가 호출한다. `agent/factory.py`는 모델과 분류기의 생성만 맡으며 웹과 벤치마크가 함께 사용한다.
 - `ERFinder`는 체크포인터와 Store를 외부에서 주입받아 사용한다.
+- 그래프 상태는 `ERGraphState` / `ExecutionState`, 검색 근거는 `SearchSession`, API 캐시는 `medical_api/cache.py`로 관리한다. 실행 경로에서 사용하지 않던 `memory/state.py`의 별도 상태·캐시 구현은 제거했다.
+- `regions.py`는 API와 주소 검색의 지역명 정규화를, `freshness.py`는 정보 최신성 판정을 공유한다. 각 호출자는 기존 주소 해석 정책과 최신성 유효시간을 전달한다. `lookup_error`는 별도 상태 대신 오류 메타데이터에서 계산한다.
+- `agent/assembly.py`는 검색 세션·프로필·방문 선택·체크포인터·그래프를 조립한다. 주입된 Store·체크포인터·분류기를 그대로 사용하며, 기본 메모리와 집계기는 Runner마다 따로 생성한다.
+- `agent/results.py`는 실행 결과 검증, 승인 상태에 따른 안내, 오류 복구, 진단 집계와 렌더링을 담당한다. `ERFinder`는 `chat()`·`approve()`의 행동 흐름과 그래프 실행·진행 알림을 유지하고, 처리된 결과를 최근 응답·승인 대기 상태에 반영한다. `ChatResult`는 기존처럼 `agent.runner`에서 가져올 수 있다. 세션 종료 시 결과 집계도 초기화한다.
 - `cli/app.py`는 `ERFinder`의 실행과 승인 재개 인터페이스만 호출한다. 렌더링은 `ERSearchReply`만 입력으로 받는다.
 
 ### A.5 미들웨어 조립 순서 (`agent/graph.py`)
 
 ```
 before_agent   : EmergencyInputGuard
-before_model   : ProfileDynamicPrompt → PIIMiddleware
-wrap_model_call: ModelCallLimitMiddleware(run_limit=10)
-                 → ServerPlannedCalls (server_planned_calls=True일 때만)
+before_model   : PIIMiddleware → ModelCallLimitMiddleware(run_limit=10)
+                 → ToolSafetyMiddleware → ServerPlannedCalls (현재 단계 계획 저장)
+wrap_model_call: ProfileDynamicPrompt
+                 → ServerPlannedCalls (server_planned_calls=True이면 모델 생략)
                  → ModelCounter
 wrap_tool_call : ToolRetryMiddleware(max_retries=2, 초기 지연 1s)
-after_model    : HumanInTheLoopMiddleware(save_visit_plan), ToolSafetyMiddleware
-                 (after_model은 목록 역순 실행: 검증이 HITL보다 먼저)
+                 -> ToolSafetyMiddleware
+after_model    : ServerPlannedCalls → ToolSafetyMiddleware
+                 → HumanInTheLoopMiddleware(save_visit_plan)
+                 → ModelCallLimitMiddleware → PIIMiddleware
+                 (실제 실행 순서: 호출 계획 강제와 실패 차단이 HITL보다 먼저)
 after_agent    : EvidenceCheckMiddleware
 ```
 
-`ServerPlannedCalls`는 서버가 이미 다음 도구 호출(`session.next_calls()`)을 알고 있으면 모델을 호출하지 않고 해당 도구 호출을 직접 생성한다. 같은 턴의 `ToolSafetyMiddleware.after_model`이 호출 계획을 다시 계산하지 않도록 `session.planned_calls`로 전달하며, 이 값은 다음 `before_model`에서 비운다. 모델은 최종 응답을 생성할 때와 방문 계획의 승인을 기다릴 때만 호출한다. `ERFinder(server_planned_calls=False)`로 이 기능을 끄면 개선 전 동작인 검색 단계별 모델 호출로 돌아간다.
+`agent/execution.py`의 `ServerPlannedCalls`는 `before_model`에서 다음 검색 호출을 계산하고 그래프 상태의 `planned_calls`에 저장한다. 프롬프트, 모델 생략, `after_model`의 호출 순서·인자 강제는 같은 계획을 공유한다. 계획은 매 단계 새로 덮어쓰며 검색 세션에는 실행용 임시 필드를 두지 않는다. 이미 계획과 일치하는 도구 호출은 ID도 유지한다. 모델은 최종 응답을 생성할 때와 방문 계획의 승인을 기다릴 때만 호출한다. `ERFinder(server_planned_calls=False)`는 모델 생략만 끄며, 서버가 정한 호출 순서와 저장 전 승인 흐름은 유지한다.
 
 `ERFinder.chat()`의 결과에는 계측 정보인 `RunDiagnostics`가 포함된다. 메인 모델(`model_calls`, `input_tokens` 등)과 분류기(`classifier_calls`, `classifier_*_tokens`)를 따로 집계하며, 분류기를 호출하지 않은 턴에서는 `classifier_calls`가 0이다. 토큰 수가 일부 누락되면 `tokens_complete`가 `False`가 되고 이 경우 비용은 계산하지 않는다. 입력과 출력의 원문은 담지 않는다.
 
@@ -109,15 +117,22 @@ after_agent    : EvidenceCheckMiddleware
 |---|---|---|
 | 외부 API 타임아웃·5xx·429 | 2회 재시도(백오프 1초) | 실패 시 아래로 |
 | 재시도 실패 + 캐시 있음 | 60초 캐시, `stale=True` | '갱신 지연' + 전화 확인 권고 |
-| 재시도 실패 + 캐시 없음 | 빈 목록 | 모델이 상황 설명 |
+| 재시도 실패 + 캐시 없음 | 조회 실패 기록, 추가 호출 중단 | 조회 실패 고정 안내, 후보 미표시 |
 | `geocode` 0건 | `found=False` | 위치 재질문 |
-| 중증 수용 조회 실패 | `acceptable=None` | `unknown`이며 '확인 불가'로 표시 |
-| `get_er_detail` 실패 | 목록 값으로 대체 | 누락 필드 '확인 불가' |
+| 중증 수용 조회 실패 | `lookup_failed`, 단계 `get_severe_acceptance` | 조회 실패 안내, 후보 미표시 |
+| `get_er_detail` 실패 | `lookup_failed`, 단계 `get_er_detail` | 조회 실패 안내, 후보 미표시 |
+| 모델 호출 실패 | `model_failed`, 단계 `model` | 응답 생성 실패 안내, 후보 미표시 |
+| 승인 상태 불일치·저장 실패 | `approval_failed`, 단계 `approval` / `save_visit_plan` | 승인·저장 상태 안내, 자동 저장 재시도 없음 |
+| 내부 실행·결과 처리 실패 | `internal_failed`, 단계 `graph` / `output` | 요청 실패 안내, 후보 미표시 |
 | 모델 호출 10회 도달 | 현재 후보로 종료 응답 | 정상 종료 |
 | 반경 3회 확대 후 후보 0 | `no_candidate_reason` | 후보 없음 + 119 안내 |
 | `save_visit_plan` 거절 / 실패 | 실행 안 함 / `saved=False`, 재시도 없음 | 저장 없이 대화 계속 / 실패 안내 |
 
 로깅: API 키, 마스킹 전 전화번호·주민번호는 로그에 남기지 않는다.
+
+`errors.py`는 오류 분류와 정제된 진단 식별자를 정의한다. `RunDiagnostics`와 벤치마크 기록은 `failure_category`, `failure_code`, `failure_stage`를 보존하며 SDK 상태 코드·오류 코드는 허용된 값만 남긴다. 검색 세션에는 예외·트레이스백 대신 정제된 메타데이터만 저장한다. `lookup_error`는 실제 의료·위치 API 조회 실패에만 설정하며, 다른 오류도 후보와 후속 호출은 차단한다. 정상적인 빈 조회 결과는 오류로 분류하지 않는다.
+
+웹 경계는 분류를 고정 안내로 변환하고 실패 응답의 후보와 승인 요청을 제거한다. 저장 완료 후 모델 응답만 실패한 경우에는 이미 저장되었다는 안내를 보존한다. 저장소가 쓰기 직후 예외를 던져 완료 여부가 불확실한 경우에도 자동으로 쓰기를 반복하지 않는다.
 
 ---
 
@@ -165,7 +180,7 @@ after_agent    : EvidenceCheckMiddleware
 - Base URL은 `https://dapi.kakao.com`이고, 인증은 헤더 `Authorization: KakaoAK {KAKAO_REST_API_KEY}`로 한다. 응답은 JSON이다. 주소 검색(`GET /v2/local/search/address.json`)을 먼저 사용하고, 결과가 없으면 키워드 검색(`GET /v2/local/search/keyword.json`)으로 넘어간다. 키워드 검색은 "경포대", "역삼역" 같은 표현을 처리한다.
 - `geocode`의 매핑은 다음과 같다. `documents[].y`와 `x`는 float로 변환하여 `lat`과 `lon`에 담고, `road_address_name`(없으면 `address_name`)은 `address`에 담는다. `address.region_1depth_name`은 `sido`(E-Gen의 `STAGE1`), `region_2depth_name`은 `sigungu`(`STAGE2`)가 되며, `meta.total_count`가 0이면 `found=False`다.
 - 주소 검색과 키워드 검색이 모두 0건이면 `found=False`를 반환하고 이후 도구를 호출하지 않는다. 키워드 검색 결과에 `address`가 없으면 `road_address`에서 시도와 시군구를 추출한다.
-- 시도 표기는 카카오와 E-Gen이 다르다(예: `서울`과 `서울특별시`). 이를 `parser.py`의 `SIDO_ALIASES`로 정규화한다. 강원(2023년)과 전북(2024년)은 `특별자치도`로 명칭이 바뀌어서, `STAGE1`에 `강원도`를 쓰면 데이터가 있어도 결과가 0건이므로 이 표에 반영하였다.
+- 시도 표기는 카카오와 E-Gen이 다르다(예: `서울`과 `서울특별시`). 이를 `regions.py`의 `SIDO_ALIASES`로 정규화한다. 강원(2023년)과 전북(2024년)은 `특별자치도`로 명칭이 바뀌어서, `STAGE1`에 `강원도`를 쓰면 데이터가 있어도 결과가 0건이므로 이 표에 반영하였다.
 - 429와 5xx 응답은 2회 재시도한다. 개인 위치는 로그에 남기지 않고 세션이 끝나면 폐기한다.
 
 ### B.3 복원력 정책 (`medical_api/resilience.py`)

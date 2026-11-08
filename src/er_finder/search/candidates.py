@@ -1,22 +1,10 @@
 import heapq
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
+from er_finder.freshness import is_stale
 from er_finder.guardrails.evidence import safe_data
 from er_finder.models import HospitalCandidate
-
-
-def is_stale(timestamp: str | None, now: datetime) -> bool:
-    if not timestamp:
-        return True
-    try:
-        parsed = datetime.fromisoformat(timestamp)
-        if parsed.tzinfo is None:
-            return True
-        age = (now.astimezone(UTC) - parsed.astimezone(UTC)).total_seconds()
-        return age > 900 or age < -60
-    except (TypeError, ValueError):
-        return True
 
 
 def select_candidates(

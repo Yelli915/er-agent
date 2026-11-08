@@ -7,8 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from er_finder.memory.store import ERFinderStore
 from er_finder.memory.visit_plan import PendingVisitPlan
-
-DISCLAIMER = "응급실 상황은 수시로 변하므로 방문 전 전화 확인을 권장합니다"
+from er_finder.models import DISCLAIMER
 
 
 class UIHospital(BaseModel):

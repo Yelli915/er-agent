@@ -21,8 +21,14 @@ from pathlib import Path
 
 BACKEND_FILES = (
     "src/er_finder/config.py",
+    "src/er_finder/errors.py",
+    "src/er_finder/regions.py",
+    "src/er_finder/freshness.py",
     "src/er_finder/models.py",
     "src/er_finder/agent/runner.py",
+    "src/er_finder/agent/execution.py",
+    "src/er_finder/agent/assembly.py",
+    "src/er_finder/agent/results.py",
     "src/er_finder/agent/tools.py",
     "src/er_finder/prompts.py",
     "src/er_finder/medical_api/client.py",
