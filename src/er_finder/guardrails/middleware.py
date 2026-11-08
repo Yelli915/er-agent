@@ -11,12 +11,8 @@ from langchain.agents.middleware import (
 from langchain_core.messages import AIMessage, ToolMessage
 
 from er_finder.errors import FailureCategory, OperationError, error_metadata
-from er_finder.guardrails.evidence import sanitize_prose
 from er_finder.messages import FAILURE_MESSAGES
-from er_finder.models import ERSearchReply
 from er_finder.prompts import SYSTEM_PROMPT
-
-NEXT_ACTION_MAX_LENGTH = 80
 
 
 def EmergencyInputGuard(session: Any) -> Any:
@@ -85,13 +81,6 @@ def EvidenceCheckMiddleware(session: Any) -> Any:
     @after_agent(name="EvidenceCheckMiddleware")
     def evidence_check(state: Any, runtime: Any) -> dict[str, Any]:
         reply = session.check_evidence(state.get("structured_response"))
-        updates: dict[str, Any] = {
-            "next_action": sanitize_prose(reply.next_action, limit=NEXT_ACTION_MAX_LENGTH)
-        }
-        if reply.no_candidate_reason:
-            updates["no_candidate_reason"] = sanitize_prose(reply.no_candidate_reason)
-        # model_copy skips validation; re-validate so the edited prose keeps the contract.
-        reply = ERSearchReply.model_validate({**reply.model_dump(), **updates})
         return {
             "structured_response": reply,
             **session.snapshot(),
@@ -107,7 +96,7 @@ class ToolSafetyMiddleware(AgentMiddleware):
     def _failure_reply(self) -> dict[str, Any] | None:
         if not self.session.failure:
             return None
-        reply = self.session.check_evidence(None)
+        reply = self.session.make_reply()
         return {
             "jump_to": "end",
             "structured_response": reply,

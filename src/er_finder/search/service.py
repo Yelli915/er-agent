@@ -24,7 +24,7 @@ from er_finder.search.contracts import PlannedCall, Region, SearchProvider
 from er_finder.search.distance import distance_km
 from er_finder.search.errors import ToolOrderError
 from er_finder.search.keywords import is_followup, mentions_new_symptom, requests_specialty
-from er_finder.search.location import extract_location
+from er_finder.search.location import extract_location, needs_location_clarification
 from er_finder.search.planner import CallPlanner
 from er_finder.search.radius import radius_sequence
 from er_finder.search.reply import ReplyBuilder
@@ -137,11 +137,23 @@ class SearchSession:
         self.assessment = assessment or assess_input(self.text)
         # A follow-up that only changes search options retains the clinical retrieval context.
         followup = is_followup(self.text)
-        self.location_query = extract_location(self.text)
-        location_only = bool(self.location_query) and not mentions_new_symptom(self.text)
+        workplace_unknown = needs_location_clarification(self.text)
+        new_symptom = mentions_new_symptom(self.text)
+        self.location_query = self.assessment.location_query or extract_location(self.text)
+        explicit_location = bool(self.assessment.location_query) or (
+            bool(self.location_query) and not workplace_unknown
+        )
+        unresolved = not explicit_location and (
+            workplace_unknown or self.assessment.needs_location
+        )
+        self.assessment.needs_location = unresolved
+        if unresolved:
+            self.location_query = None
+            self.location = None
         preserve = (
             had_context
-            and (location_only or followup)
+            and (bool(self.location_query) or followup or unresolved)
+            and not new_symptom
             and self.assessment.triage.severity == "standard"
         )
         if not preserve:
@@ -149,7 +161,7 @@ class SearchSession:
             self.symptom_text = self.text
         if self.location_query:
             self.location = None
-        elif not self.location and home_address:
+        elif not self.location and home_address and not unresolved:
             self.location_query = home_address
         self._reset_lookup(self.text, force_refresh=force_refresh)
 
@@ -187,8 +199,9 @@ class SearchSession:
         result = self._call_provider("geocode", self.provider.geocode, query)
         if result.get("found"):
             try:
-                distance_km(float(result["lat"]), float(result["lon"]), 0, 0)
-                self.location = {**result, "lat": float(result["lat"]), "lon": float(result["lon"])}
+                lat, lon = float(result["lat"]), float(result["lon"])
+                distance_km(lat, lon, 0, 0)
+                self.location = {**result, "lat": lat, "lon": lon}
             except (ValueError, TypeError, KeyError):
                 self.location = None
         else:

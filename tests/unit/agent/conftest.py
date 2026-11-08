@@ -75,8 +75,8 @@ class OfflineProvider(OfflineSearchProvider):
         self.closed = True
 
 
-@pytest.fixture
-def make_finder():
+@pytest.fixture(params=[True, False], ids=["deterministic", "final-model"])
+def make_finder(request):
     from er_finder.agent.runner import ERFinder
 
     created = []
@@ -85,6 +85,7 @@ def make_finder():
         finder = ERFinder(
             provider=kwargs.pop("provider", OfflineProvider()),
             model=kwargs.pop("model", OfflineModel()),
+            deterministic_reply=kwargs.pop("deterministic_reply", request.param),
             **kwargs,
         )
         created.append(finder)

@@ -54,6 +54,8 @@ class ReplyBuilder:
         elif not s.location:
             reason = REASON_NO_LOCATION
             action = ACTION_NO_LOCATION
+            if s.assessment.needs_location:
+                action = "새로 검색할 위치의 주소, 가까운 역이나 건물 이름을 알려주세요."
         elif not candidates:
             unconfirmed = any(
                 b.get("er_beds_available", 0)
@@ -96,6 +98,9 @@ class ReplyBuilder:
     def check_evidence(self, proposal: Any) -> ERSearchReply:
         s = self.session
         canonical = self.make_reply().model_dump()
+        canonical["next_action"] = sanitize_prose(canonical["next_action"], limit=80)
+        if canonical["no_candidate_reason"]:
+            canonical["no_candidate_reason"] = sanitize_prose(canonical["no_candidate_reason"])
         if hasattr(proposal, "model_dump"):
             proposal = proposal.model_dump()
         if not isinstance(proposal, dict):

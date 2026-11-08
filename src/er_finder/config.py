@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     classifier_model: str = Field(default="gemini-3.5-flash-lite", min_length=1)
     classifier_temperature: float = Field(default=0, ge=0, le=2)
     classifier_max_tokens: int = Field(default=200, ge=64, le=2000)
-    request_timeout: float = Field(default=5, gt=0, le=60)
     model_timeout: float = Field(default=60, gt=0, le=180)
 
 

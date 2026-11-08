@@ -39,6 +39,7 @@ def test_blank_input_is_rejected_before_running_graph(make_finder):
         make_finder().chat("  ")
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_search_passes_user_message_and_collects_real_tool_evidence(make_finder):
     model = OfflineModel()
     finder = make_finder(model=model)
@@ -184,6 +185,7 @@ def test_invalid_candidate_and_approval_without_selection_are_rejected(make_find
         finder.approve(True)
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_model_failure_returns_checked_fallback_and_resets_pending(make_finder):
     finder = make_finder(model=OfflineModel(strategy="failure"))
     result = finder.chat("강남구 역삼동 발목이 아파요")
@@ -230,6 +232,7 @@ def test_close_releases_provider(make_finder):
     assert finder.session.provider.closed
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_model_failure_after_bed_evidence_does_not_publish_partial_candidates(make_finder):
     finder = make_finder(model=OfflineModel(strategy="fail_after_beds"))
     result = finder.chat("강남구 역삼동 발목이 아파요")
@@ -243,6 +246,7 @@ def test_model_failure_after_bed_evidence_does_not_publish_partial_candidates(ma
     assert not finder.pending
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_model_failure_after_save_reports_completed_write_without_replay(make_finder):
     finder = make_finder(model=OfflineModel(strategy="fail_after_save"))
     finder.chat("강남구 역삼동 발목이 아파요")
@@ -255,6 +259,7 @@ def test_model_failure_after_save_reports_completed_write_without_replay(make_fi
         finder.approve(True)
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_run_diagnostics_count_only_new_response_tokens_and_contain_no_patient_text(make_finder):
     finder = make_finder()
     first = finder.chat("강남구 역삼동 발목이 아파요")
@@ -275,6 +280,7 @@ def test_run_diagnostics_count_only_new_response_tokens_and_contain_no_patient_t
     assert finder.last_diagnostics is None
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_server_planned_search_steps_do_not_call_the_model(make_finder):
     model = OfflineModel()
     finder = make_finder(model=model)
@@ -286,6 +292,7 @@ def test_server_planned_search_steps_do_not_call_the_model(make_finder):
     assert result.diagnostics.tokens_complete
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_urgent_search_with_condition_uses_one_model_call(make_finder):
     finder = make_finder()
     result = finder.chat("강남구 역삼동 가슴이 답답하고 식은땀이 나요")
@@ -332,6 +339,7 @@ def test_failing_progress_listener_does_not_abort_the_search(make_finder):
     assert result.reply.hospitals
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_failed_run_can_recover_without_retaining_error_metadata(make_finder):
     model = OfflineModel(strategy="failure")
     finder = make_finder(model=model)
@@ -354,6 +362,7 @@ def test_failed_run_can_recover_without_retaining_error_metadata(make_finder):
     )
 
 
+@pytest.mark.parametrize("make_finder", [False], indirect=True)
 def test_end_session_resets_result_accounting_before_the_next_run(make_finder):
     finder = make_finder()
     finder.chat("강남구 역삼동 발목이 아파요")

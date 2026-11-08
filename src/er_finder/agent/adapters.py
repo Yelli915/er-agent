@@ -39,7 +39,8 @@ class ERGraphState(AgentState[ERSearchReply], total=False):
 
 def selected_index(text: str) -> int | None:
     match = re.fullmatch(
-        r"\s*([1-9]\d*)\s*(?:번)?\s*(?:으로\s*갈게요|으로|이요|요|선택|갈게요)?[.!]?\s*",
+        r"\s*([1-9]\d*)\s*(?:번)?\s*(?:병원)?\s*"
+        r"(?:으로\s*(?:갈게요|할게요|할게)|으로|이요|요|선택|갈게요)?[.!]?\s*",
         text,
     )
     return int(match[1]) - 1 if match else None

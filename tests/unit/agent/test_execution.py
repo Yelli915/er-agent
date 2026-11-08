@@ -47,7 +47,9 @@ def test_model_and_tool_hooks_share_one_plan(enabled, monkeypatch):
 
 def test_next_step_replaces_the_previous_plan_including_an_empty_plan(monkeypatch):
     session = SearchSession(OfflineSearchProvider())
-    execution = ServerPlannedCalls(session, SimpleNamespace(pending=None, decided=False))
+    execution = ServerPlannedCalls(
+        session, SimpleNamespace(pending=None, decided=False), deterministic_reply=False
+    )
     calls = [{"name": "geocode", "args": {"query": "previous-location"}}]
     monkeypatch.setattr(session, "next_calls", lambda: calls)
     state = execution.before_model({}, None)

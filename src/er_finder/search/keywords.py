@@ -2,7 +2,7 @@
 
 import re
 
-FOLLOWUP_MARKERS = ("다시", "같은 위치", "반경", "지난번")
+FOLLOWUP_MARKERS = ("다시", "같은 위치", "아까 위치", "반경", "지난번")
 SPECIALTY_MARKERS = ("소아", "봉합", "정형외과", "산부인과")
 # A location answer with no new symptom must not erase the prior assessment.
 NEW_SYMPTOM = re.compile(

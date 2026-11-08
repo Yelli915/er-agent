@@ -45,6 +45,7 @@ def build_runner_dependencies(
     store: Any,
     checkpointer: Any,
     server_planned_calls: bool,
+    deterministic_reply: bool,
 ) -> RunnerDependencies:
     context = ERFinderContext(user_id, transport)
     session = SearchSession(provider, transport)
@@ -73,6 +74,7 @@ def build_runner_dependencies(
         store=store,
         checkpointer=checkpointer,
         server_planned_calls=server_planned_calls,
+        deterministic_reply=deterministic_reply,
     )
     run_config = session_manager.build_config(user_id)
     run_config["configurable"].update(session=session, visit=visit)

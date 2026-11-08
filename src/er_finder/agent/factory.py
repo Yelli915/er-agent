@@ -13,13 +13,12 @@ from er_finder.config import Settings
 from er_finder.guardrails.contracts import Classifier
 
 
-def build_models(settings: Settings) -> tuple[Any, Classifier]:
-    """Return the main chat model and the classifier built on its own cheaper model."""
+def build_main_model(settings: Settings) -> Any:
+    """Construct the graph's chat model without constructing the input classifier."""
     ChatGoogle = importlib.import_module("langchain_google_genai").ChatGoogleGenerativeAI  # noqa: N806
-    InputClassifier = importlib.import_module("er_finder.guardrails.triage").InputClassifier  # noqa: N806
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     timeout = settings.model_timeout
-    model = ChatGoogle(
+    return ChatGoogle(
         model=settings.main_model,
         google_api_key=api_key,
         thinking_budget=settings.main_thinking_budget,
@@ -27,15 +26,27 @@ def build_models(settings: Settings) -> tuple[Any, Classifier]:
         timeout=timeout,
         max_retries=0,
     )
+
+
+def build_classifier(settings: Settings) -> Classifier:
+    """Construct only the input model, including for standalone evaluations."""
+    ChatGoogle = importlib.import_module("langchain_google_genai").ChatGoogleGenerativeAI  # noqa: N806
+    InputClassifier = importlib.import_module("er_finder.guardrails.triage").InputClassifier  # noqa: N806
     classifier_model = ChatGoogle(
         model=settings.classifier_model,
-        google_api_key=api_key,
+        google_api_key=os.environ.get("GEMINI_API_KEY", "").strip(),
         temperature=settings.classifier_temperature,
         max_output_tokens=settings.classifier_max_tokens,
-        timeout=timeout,
+        timeout=settings.model_timeout,
         max_retries=0,
     )
-    return model, InputClassifier(classifier_model)
+    classifier: Classifier = InputClassifier(classifier_model)
+    return classifier
+
+
+def build_models(settings: Settings) -> tuple[Any, Classifier]:
+    """Construct both dependencies for the graph runner."""
+    return build_main_model(settings), build_classifier(settings)
 
 
 def default_runner_factory(**kwargs: Any) -> Any:

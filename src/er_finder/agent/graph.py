@@ -40,6 +40,7 @@ def build_graph(
     store: Any,
     checkpointer: Any,
     server_planned_calls: bool = True,
+    deterministic_reply: bool = True,
 ) -> Any:
     return create_agent(
         model,
@@ -63,7 +64,10 @@ def build_graph(
             # after_model hooks run in reverse list order: validate before HITL.
             ToolSafetyMiddleware(session),
             # after_model runs before HITL; wrap_model stays outside the counter.
-            ServerPlannedCalls(session, visit, enabled=server_planned_calls),
+            ServerPlannedCalls(
+                session, visit, enabled=server_planned_calls,
+                deterministic_reply=deterministic_reply,
+            ),
             counter,
             EvidenceCheckMiddleware(session),
         ],

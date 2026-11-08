@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ModelResponse
+from langchain.agents.middleware.types import ModelResponse, hook_config
 from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
 
 from er_finder.errors import OperationError
@@ -52,16 +52,33 @@ class ServerPlannedCalls(AgentMiddleware):
 
     state_schema = ExecutionState
 
-    def __init__(self, session: SearchSession, visit: Any, *, enabled: bool = True) -> None:
+    def __init__(
+        self, session: SearchSession, visit: Any, *, enabled: bool = True,
+        deterministic_reply: bool = True,
+    ) -> None:
         self.session, self.visit = session, visit
         self.enabled = enabled
+        self.deterministic_reply = deterministic_reply
 
+    @hook_config(can_jump_to=["end"])
     def before_model(self, state: Any, runtime: Any) -> dict[str, Any]:
         calls = [] if self.session.failure or self.visit.pending else self.session.next_calls()
+        if self.enabled and self.deterministic_reply and not calls and (
+            not self.visit.pending or self.visit.decided
+        ):
+            return {
+                "planned_calls": [], "jump_to": "end",
+                "structured_response": self.session.make_reply(),
+            }
         return {"planned_calls": calls}
 
     def wrap_model_call(self, request: Any, handler: Any) -> Any:
         calls = request.state["planned_calls"]
+        if (
+            self.enabled and self.deterministic_reply
+            and self.visit.pending and not self.visit.decided
+        ):
+            calls = [{"name": "save_visit_plan", "args": dict(self.visit.pending)}]
         if not self.enabled or not calls:
             return handler(request)
         return ModelResponse(result=[AIMessage(content="", tool_calls=_as_tool_calls(calls))])
@@ -86,9 +103,10 @@ class ServerPlannedCalls(AgentMiddleware):
             removals = _remove_tool_results(state["messages"], old_ids)
             proposed = [{"name": c["name"], "args": c["args"]} for c in last.tool_calls]
             calls = last.tool_calls if proposed == next_calls else _as_tool_calls(next_calls)
-            self.session.allow_severe_batch = any(
-                c["name"] == "get_er_bed_status" for c in calls
-            ) and any(c["name"] == "get_severe_acceptance" for c in calls)
+            tool_names = {c["name"] for c in calls}
+            self.session.allow_severe_batch = {
+                "get_er_bed_status", "get_severe_acceptance"
+            } <= tool_names
             if self.session.allow_severe_batch:
                 self.session.beds_ready.clear()
             return {

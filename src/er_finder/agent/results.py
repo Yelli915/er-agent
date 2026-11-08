@@ -71,7 +71,13 @@ class RunResultProcessor:
             output = execute(usage)
             stage = "output"
             pending = bool(output.get("__interrupt__"))
-            reply = self.session.check_evidence(output.get("structured_response"))
+            finalized = output.get("structured_response")
+            # Completed graphs already passed the output guard. Interrupts may not
+            # run after_agent hooks and must finalize from current evidence here.
+            reply = (
+                finalized if not pending and isinstance(finalized, ERSearchReply)
+                else self.session.check_evidence(finalized)
+            )
             note = self.session.assessment.reason or history_note
             if self.visit.decided and not pending:
                 if self.visit.saved:
@@ -81,7 +87,7 @@ class RunResultProcessor:
                 else:
                     note = VISIT_SAVE_FAILED
             error_info = self.session.failure
-            succeeded = not bool(error_info)
+            succeeded = error_info is None
         except Exception as error:
             error_info = self.session.failure or error_metadata(error, stage=stage)
             saved = self.visit.saved
@@ -90,11 +96,7 @@ class RunResultProcessor:
             self.session_manager.reset_session(self.user_id)
             self.session.fail_run(error_info)
             reply = self.session.check_evidence(None)
-            note = (
-                VISIT_SAVED_REPLY_FAILED
-                if saved
-                else FAILURE_MESSAGES[error_info["failure_category"]]
-            )
+            note = VISIT_SAVED_REPLY_FAILED if saved else None
         if error_info is not None and note != VISIT_SAVED_REPLY_FAILED:
             note = FAILURE_MESSAGES[error_info["failure_category"]]
         self._session_model_calls += self.counter.calls

@@ -46,6 +46,7 @@ class ERFinder:
         checkpointer: Any = None,
         on_emergency: Callable[[str], None] | None = None,
         server_planned_calls: bool = True,
+        deterministic_reply: bool = True,
         on_progress: ProgressCallback | None = None,
     ) -> None:
         self.on_progress = on_progress
@@ -58,6 +59,7 @@ class ERFinder:
             store=store,
             checkpointer=checkpointer,
             server_planned_calls=server_planned_calls,
+            deterministic_reply=deterministic_reply,
         )
         self.context = dependencies.context
         self.session = dependencies.session

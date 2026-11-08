@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from er_finder.guardrails.evidence import DIAGNOSIS_NOTICE
 from er_finder.guardrails.middleware import EvidenceCheckMiddleware
 from er_finder.models import DISCLAIMER, ERSearchReply
+from er_finder.search.reply import ReplyBuilder
 
 
 def _reply(next_action: str) -> ERSearchReply:
@@ -19,9 +20,10 @@ def _reply(next_action: str) -> ERSearchReply:
 
 
 def _run(next_action: str) -> ERSearchReply:
-    session = SimpleNamespace(
-        check_evidence=lambda proposal: _reply(next_action), snapshot=lambda: {}
-    )
+    session = SimpleNamespace(snapshot=lambda: {})
+    builder = ReplyBuilder(session)
+    builder.make_reply = lambda: _reply(next_action)
+    session.check_evidence = builder.check_evidence
     guard = EvidenceCheckMiddleware(session)
     return guard.after_agent({"structured_response": None}, None)["structured_response"]
 

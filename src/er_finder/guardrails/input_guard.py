@@ -143,6 +143,8 @@ class InputAssessment:
     reason: str | None = None
     greeting: bool = False
     suspicious: bool = False
+    location_query: str | None = None
+    needs_location: bool = False
 
 
 def assess_input(text: str) -> InputAssessment:

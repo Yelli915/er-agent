@@ -45,11 +45,11 @@ def main(argv: list[str] | None = None) -> int:
         if not os.environ.get("GEMINI_API_KEY", "").strip():
             print("BLOCKED: GEMINI_API_KEY 가 설정되지 않았습니다.", file=sys.stderr)
             return 2
-        from er_finder.agent.factory import build_models
+        from er_finder.agent.factory import build_classifier
         from er_finder.config import Settings
 
         settings = Settings()
-        _, classifier = build_models(settings)
+        classifier = build_classifier(settings)
         reports["rules+classifier"] = golden.evaluate(classifier.assess, cases)
         reports["rules+classifier"]["classifier_model"] = settings.classifier_model
         _print("rules+classifier", reports["rules+classifier"])

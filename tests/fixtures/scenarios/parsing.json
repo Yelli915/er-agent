@@ -1,0 +1,7 @@
+[
+  {"id":"station","text":"강남역에서 발목이 아파요","query":"강남역","needs_location":false},
+  {"id":"landmark","text":"코엑스 동문에서 발목을 삐었어","query":"코엑스 동문","needs_location":false},
+  {"id":"landmark-workplace","text":"코엑스 동문 회사 근처로 바꿔줘","query":"코엑스 동문","needs_location":false},
+  {"id":"unknown-workplace","text":"회사 근처로 바꿔줘","query":null,"needs_location":true},
+  {"id":"repeat","text":"아까 위치에서 다시 찾아줘","query":null,"needs_location":false}
+]

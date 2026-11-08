@@ -7,6 +7,7 @@ from er_finder.guardrails.input_guard import CALL_119_NOTICE, InputAssessment, a
 from er_finder.guardrails.pii import mask_pii
 from er_finder.models import Condition, TriageAssessment
 from er_finder.prompts import CLASSIFIER_PROMPT
+from er_finder.search.location import extract_location
 from er_finder.usage import ClassifierUsage, RunUsage
 
 
@@ -21,6 +22,8 @@ class ClassifierOutput(BaseModel):
     condition: Condition | None = None
     injection: bool
     confidence: float = Field(ge=0, le=1)
+    location_query: str | None = Field(default=None, max_length=150)
+    needs_location: bool = False
 
 
 class InputClassifier:
@@ -39,11 +42,20 @@ class InputClassifier:
         self.last_usage = ClassifierUsage()
         masked = mask_pii(text)
         result = assess_input(masked)
+        needs_critical_location = (
+            result.triage.severity == "critical" and extract_location(masked) is None
+        )
+        # Unresolved critical input must not silently reuse a previous search location.
+        result.needs_location = needs_critical_location
         if (
             self.model is None
             or result.blocked
             or result.greeting
-            or (result.triage.severity == "critical" and not result.suspicious)
+            or (
+                result.triage.severity == "critical"
+                and not result.suspicious
+                and not needs_critical_location
+            )
         ):
             return result
         usage, started = RunUsage(), perf_counter()
@@ -52,7 +64,17 @@ class InputClassifier:
                 [("system", CLASSIFIER_PROMPT), ("human", masked)],
                 config={"callbacks": [usage]},
             )
-            assessment = TriageAssessment.model_validate(output.model_dump())
+            parsed = ClassifierOutput.model_validate(output.model_dump())
+            assessment = TriageAssessment.model_validate(
+                parsed.model_dump(exclude={"location_query", "needs_location"})
+            )
+            # A model may extract a literal location, never invent or resolve one.
+            query = (parsed.location_query or "").strip()
+            if query and query in masked and len(query) >= 2:
+                result.location_query = query
+            result.needs_location = (
+                parsed.needs_location or needs_critical_location
+            ) and not result.location_query
             ranks = {"standard": 0, "urgent": 1, "critical": 2}
             if ranks[assessment.severity] >= ranks[result.triage.severity]:
                 if result.triage.condition is not None:

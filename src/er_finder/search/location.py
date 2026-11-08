@@ -5,6 +5,15 @@ import re
 from er_finder.search.coordinates import extract_coordinates
 
 
+def needs_location_clarification(text: str) -> bool:
+    """A relative workplace is not the previously searched location."""
+    pattern = r"(?:회사|직장)\s*(?:(?:근처|주변|쪽|앞)(?:으로|로)?|으로|로)"
+    if not re.search(pattern, text):
+        return False
+    remainder = re.sub(pattern, "", text)
+    return extract_location(remainder) is None
+
+
 def extract_location(text: str) -> str | None:
     coordinates = extract_coordinates(text)
     if coordinates is not None:

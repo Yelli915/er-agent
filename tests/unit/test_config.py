@@ -10,7 +10,6 @@ def test_model_settings_keep_network_timeouts_separate(monkeypatch):
     settings = Settings()
     assert settings.main_model == "configured-model"
     assert settings.model_timeout == 60
-    assert settings.request_timeout == 5
 
 
 @pytest.mark.parametrize(
